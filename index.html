@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>校园跑章法器</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <h1>校园跑章法器</h1>
+      <p class="subtitle">规划一学期的校园跑，别把次数都堆到期末</p>
+    </header>
+
+    <!-- 进度总览 -->
+    <section class="card" aria-label="进度总览">
+      <div class="status-row">
+        <span id="statusBadge" class="badge">—</span>
+        <span id="progressText" class="progress-text">0 / 50 次</span>
+      </div>
+
+      <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="progressBar">
+        <div class="progress-fill" id="progressFill"></div>
+      </div>
+
+      <div class="hero-row">
+        <div class="hero">
+          <span class="hero-value" id="remaining">50</span>
+          <span class="hero-label">剩余次数</span>
+        </div>
+        <p id="hint" class="hint">—</p>
+      </div>
+
+      <div class="stats">
+        <div class="stat">
+          <span class="stat-value" id="daysLeft">—</span>
+          <span class="stat-label">剩余天数</span>
+        </div>
+        <div class="stat">
+          <span class="stat-value" id="weeksLeft">—</span>
+          <span class="stat-label">剩余周数</span>
+        </div>
+        <div class="stat">
+          <span class="stat-value" id="requiredPerWeek">—</span>
+          <span class="stat-label">每周至少</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 操作 -->
+    <section class="actions" aria-label="操作">
+      <button id="plusBtn" class="btn btn-primary" type="button">完成一次 +1</button>
+      <button id="undoBtn" class="btn btn-secondary" type="button" disabled>撤销</button>
+    </section>
+
+    <!-- 设置 -->
+    <section class="card" aria-label="设置">
+      <h2 class="card-title">本学期设置</h2>
+      <form id="settingsForm" novalidate>
+        <div class="field">
+          <label for="target">目标次数</label>
+          <input id="target" type="number" min="1" step="1" inputmode="numeric" />
+        </div>
+        <div class="field">
+          <label for="completed">已完成次数</label>
+          <input id="completed" type="number" min="0" step="1" inputmode="numeric" />
+        </div>
+        <div class="field">
+          <label for="deadline">截止日期</label>
+          <input id="deadline" type="date" />
+        </div>
+        <div class="field">
+          <label for="maxPerWeek">每周最多次数</label>
+          <input id="maxPerWeek" type="number" min="1" step="1" inputmode="numeric" />
+        </div>
+        <div class="form-actions">
+          <button id="saveBtn" class="btn btn-primary" type="submit">保存设置</button>
+          <span id="saveMsg" class="save-msg" role="status"></span>
+        </div>
+      </form>
+    </section>
+
+    <!-- 重置 -->
+    <section class="danger-zone">
+      <button id="resetBtn" class="btn btn-danger" type="button">重置学期数据</button>
+    </section>
+
+    <footer class="footer">数据仅保存在本机浏览器（localStorage），不会上传。</footer>
+  </div>
+
+  <script src="core.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>

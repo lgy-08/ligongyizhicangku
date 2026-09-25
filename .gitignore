@@ -1,0 +1,7 @@
+# Claude Code 本地配置，不随项目提交
+.claude/
+
+# 依赖与系统文件
+node_modules/
+.DS_Store
+Thumbs.db
