@@ -82,7 +82,8 @@ IndexedDB 数据库 `lingualens`，版本 2。升级只新增仓库，从不删�
 3. **查词**：点击单词 → `ll/lookup` → background 词形还原、查词典、查生词表和自定义释义 → 词卡。
 4. **标记**：`ll/vocab-set` → 返回新记录 → 本地把同一词元的所有词形一起更新高亮。
 5. **YouTube 字幕模式**：`captionMode()` 在“有导入文件 → file；否则开关开启 → youtube；否则 none”中选择。youtube 模式下 `LiveCaptions` 监听 `#movie_player` 子树变化，读取 `.caption-visual-line` / `.ytp-caption-segment` 文字和 CC 按钮状态，只对新出现的单词发 `ll/annotate`。同时把 `.ytp-caption-window-container` 用内联样式设为透明，离开该模式时恢复原值。
-6. **备份提醒**：每次页面加载最多检查一次 `ll/reminder-check`；满足条件时 background 先记下提醒时间，再返回 `remind: true`，保证每个周期只提醒一次。
+6. **已出现的字幕列表**：youtube 模式下每个可见字幕行以“首次出现时的视频时间”为键插入 `LiveTranscript`（有序数组，二分插入），8 秒窗口内同文去重、前缀增长合并。`Coverage` 根据 timeupdate 和 seeking 记录实际播放过的区间，`buildTranscriptView` 在不连续处插入空缺标记。全部只在内存中，`detachSession` 时清空；广告期间和会话开始时的残留文字不记录。
+7. **备份提醒**：每次页面加载最多检查一次 `ll/reminder-check`；满足条件时 background 先记下提醒时间，再返回 `remind: true`，保证每个周期只提醒一次。
 
 ## 5. 与 YouTube 的交互约定
 

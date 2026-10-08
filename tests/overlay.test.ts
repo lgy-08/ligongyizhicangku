@@ -297,6 +297,69 @@ describe('OverlayController', () => {
     player.remove();
   });
 
+  it('transcript of YouTube captions: video order after seeking, no duplicates, gap marker, cleared on video change', async () => {
+    const r = overlayRig();
+    const player = document.createElement('div');
+    document.body.append(player);
+    r.ctl.attachSession(r.session, 'AAAAAAAAAAA', player);
+    const show = async (sec: number, lines: string[] | null) => {
+      r.state.t = sec;
+      r.ctl.onPlayerEvent('timeupdate');
+      renderCaption(player, lines);
+      await flush();
+    };
+    const seek = (sec: number) => {
+      r.ctl.onPlayerEvent('seeking');
+      r.state.t = sec;
+      r.ctl.onPlayerEvent('seeked');
+    };
+    const list = () => r.ctl.store.get().transcript.map((i) => (i.kind === 'gap' ? '--gap--' : i.line.text));
+
+    await show(1, ['one']);
+    await show(1.25, ['one']);
+    await show(1.5, ['one', 'two']);
+    await show(1.75, ['two']);
+    seek(60);
+    await show(60, ['sixty']);
+    seek(1);
+    await show(1, ['one']); // watched again: no duplicate
+    expect(list()).toEqual(['one', 'two', '--gap--', 'sixty']);
+
+    // Next video while the old caption is still on screen: it must not be recorded for the new video.
+    r.ctl.attachSession(r.session, 'BBBBBBBBBBB', player);
+    expect(r.ctl.store.get().transcript).toEqual([]);
+    await show(2, ['one']);
+    expect(r.ctl.store.get().transcript).toEqual([]);
+    await show(3, ['new video line']);
+    expect(list()).toEqual(['new video line']);
+    player.remove();
+  });
+
+  it('does not record captions while an ad is showing', async () => {
+    const r = overlayRig();
+    const player = document.createElement('div');
+    document.body.append(player);
+    player.classList.add('ad-showing');
+    r.ctl.attachSession(r.session, 'AAAAAAAAAAA', player);
+    renderCaption(player, ['buy now']);
+    await flush();
+    expect(r.ctl.store.get().transcript).toEqual([]);
+    player.classList.remove('ad-showing');
+    renderCaption(player, ['real content']);
+    await flush();
+    expect(r.ctl.store.get().transcript.map((i) => (i.kind === 'line' ? i.line.text : '-'))).toEqual(['real content']);
+    player.remove();
+  });
+
+  it('opens the card below a word in the upper half (top) or above it (bottom)', async () => {
+    const r = overlayRig();
+    r.ctl.attachSession(r.session, 'AAAAAAAAAAA');
+    await r.ctl.openCard('ran', 5, null, 40);
+    expect(r.ctl.store.get().card).toMatchObject({ x: 5, top: 40, bottom: null });
+    await r.ctl.openCard('mice', 5, 30);
+    expect(r.ctl.store.get().card).toMatchObject({ top: null, bottom: 30 });
+  });
+
   it('checks the backup reminder at most once per page', async () => {
     const r = overlayRig();
     r.ctl.attachSession(r.session, 'AAAAAAAAAAA');

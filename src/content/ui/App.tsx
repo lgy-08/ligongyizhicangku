@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore, type MouseEvent } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore, type MouseEvent, type ReactNode } from 'react';
 import { formatTimestamp } from '../../captions/text';
 import { tokenize } from '../../dict/tokenize';
 import { STATUS_LABEL, VOCAB_STATUSES, type VocabStatus } from '../../vocab/types';
@@ -6,6 +6,7 @@ import type { OverlayController } from '../overlay-controller';
 import { captionMode, wordClass, type CardState, type OverlayState } from '../overlay-state';
 
 const CARD_WIDTH = 330;
+type WordRenderer = (text: string) => ReactNode;
 /** Prevents buttons from taking focus, so Space / K / F keep controlling the YouTube player. */
 const noFocus = (e: MouseEvent) => e.preventDefault();
 
@@ -20,7 +21,9 @@ export function App({ ctl }: { ctl: OverlayController }) {
     const w = e.currentTarget.getBoundingClientRect();
     const center = w.left + w.width / 2 - r.left;
     const x = Math.max(8, Math.min(center - CARD_WIDTH / 2, r.width - CARD_WIDTH - 8));
-    void ctl.openCard(word, x, r.bottom - w.top + 8);
+    // Words in the upper half (e.g. in the list) open the card below them, otherwise above.
+    if (w.top - r.top < r.height / 2) void ctl.openCard(word, x, null, w.bottom - r.top + 8);
+    else void ctl.openCard(word, x, r.bottom - w.top + 8);
   };
 
   const mode = captionMode(s);
@@ -31,10 +34,31 @@ export function App({ ctl }: { ctl: OverlayController }) {
         ? s.liveText.split('\n').map((text, i) => ({ key: `live-${i}`, text }))
         : [];
 
+  /** Renders a caption line with every word clickable (lookup) and highlighted by status. */
+  const words: WordRenderer = (text) =>
+    tokenize(text).map((t, i) =>
+      t.isWord ? (
+        <span
+          key={i}
+          className={`${wordClass(s.annotations[t.text], s.settings)}${s.card?.word === t.text ? ' sel' : ''}`}
+          onMouseDown={noFocus}
+          onClick={(e) => {
+            e.stopPropagation();
+            onWordClick(e, t.text);
+          }}
+        >
+          {t.text}
+        </span>
+      ) : (
+        <span key={i}>{t.text}</span>
+      ),
+    );
+
   return (
     <div className="root" ref={rootRef}>
       <Toolbar s={s} ctl={ctl} />
-      {s.listOpen && s.cues && <CueList s={s} ctl={ctl} />}
+      {s.listOpen && mode === 'file' && s.cues && <CueList s={s} ctl={ctl} />}
+      {s.listOpen && mode === 'youtube' && <TranscriptList s={s} ctl={ctl} words={words} />}
       {lines.length > 0 && (
         <div className="sub">
           <div className={`sub-box${mode === 'youtube' ? ' live' : ''}`}>
@@ -44,22 +68,7 @@ export function App({ ctl }: { ctl: OverlayController }) {
               </div>
             )}
             {lines.map((line) => (
-              <div key={line.key}>
-                {tokenize(line.text).map((t, i) =>
-                  t.isWord ? (
-                    <span
-                      key={i}
-                      className={`${wordClass(s.annotations[t.text], s.settings)}${s.card?.word === t.text ? ' sel' : ''}`}
-                      onMouseDown={noFocus}
-                      onClick={(e) => onWordClick(e, t.text)}
-                    >
-                      {t.text}
-                    </span>
-                  ) : (
-                    <span key={i}>{t.text}</span>
-                  ),
-                )}
-              </div>
+              <div key={line.key}>{words(line.text)}</div>
             ))}
           </div>
         </div>
@@ -130,9 +139,15 @@ function Toolbar({ s, ctl }: { s: OverlayState; ctl: OverlayController }) {
           <button onMouseDown={noFocus} onClick={() => void ctl.setYoutubeCaptions(!s.settings.youtubeCaptions)}>
             {s.settings.youtubeCaptions ? '✓ ' : ''}使用 YouTube 字幕（尽力而为）
           </button>
-          <button onMouseDown={noFocus} disabled={!s.cues} onClick={() => ctl.toggleList()}>
-            {s.listOpen ? '隐藏字幕列表' : '字幕列表（点击跳转）'}
-          </button>
+          {captionMode(s) === 'youtube' ? (
+            <button onMouseDown={noFocus} disabled={s.transcript.length === 0} onClick={() => ctl.toggleList()}>
+              {s.listOpen ? '隐藏字幕列表' : `已出现的字幕（${s.transcript.filter((i) => i.kind === 'line').length} 句，按顺序）`}
+            </button>
+          ) : (
+            <button onMouseDown={noFocus} disabled={!s.cues} onClick={() => ctl.toggleList()}>
+              {s.listOpen ? '隐藏字幕列表' : '字幕列表（点击跳转）'}
+            </button>
+          )}
           <button onMouseDown={noFocus} disabled={!s.cues} onClick={() => ctl.clearCues()}>
             清除字幕
           </button>
@@ -174,6 +189,48 @@ function CueList({ s, ctl }: { s: OverlayState; ctl: OverlayController }) {
   );
 }
 
+/**
+ * Captions seen so far in "best effort" mode, in video order. No times and no jumping by design:
+ * the order comes from the video time at which each line was first seen, which is only an estimate.
+ */
+function TranscriptList({ s, ctl, words }: { s: OverlayState; ctl: OverlayController; words: WordRenderer }) {
+  const listRef = useRef<HTMLOListElement>(null);
+  const visible = new Set((s.liveText ?? '').split('\n').filter(Boolean));
+  const currentId = s.transcript.findLast((i) => i.kind === 'line' && visible.has(i.line.text));
+  const currentKey = currentId?.kind === 'line' ? currentId.line.id : null;
+  useEffect(() => {
+    if (currentKey === null) return;
+    listRef.current?.querySelector('li.active')?.scrollIntoView({ block: 'nearest' });
+  }, [currentKey]);
+  const count = s.transcript.filter((i) => i.kind === 'line').length;
+  return (
+    <div className="list">
+      <header>
+        <span title="只包含本次打开页面后播放过、并且打开了 CC 的部分；切换视频或刷新页面后清空">
+          已出现的字幕 · {count} 句 · 尽力而为
+        </span>
+        <button className="pill on" onMouseDown={noFocus} onClick={() => ctl.toggleList()}>
+          关闭
+        </button>
+      </header>
+      <ol ref={listRef}>
+        {s.transcript.length === 0 && <li className="gap">还没有记录到字幕。打开 CC 并播放后，出现过的字幕会按顺序列在这里。</li>}
+        {s.transcript.map((item) =>
+          item.kind === 'gap' ? (
+            <li key={item.key} className="gap">
+              …… 中间有一段没有播放过 ……
+            </li>
+          ) : (
+            <li key={item.line.id} className={`tl${item.line.id === currentKey ? ' active' : ''}`}>
+              {words(item.line.text)}
+            </li>
+          ),
+        )}
+      </ol>
+    </div>
+  );
+}
+
 function WordCard({ card, ctl }: { card: CardState; ctl: OverlayController }) {
   const r = card.result;
   const [draft, setDraft] = useState('');
@@ -188,7 +245,7 @@ function WordCard({ card, ctl }: { card: CardState; ctl: OverlayController }) {
   return (
     <div
       className="card"
-      style={{ left: card.x, bottom: card.bottom }}
+      style={card.top !== null ? { left: card.x, top: card.top } : { left: card.x, bottom: card.bottom ?? 0 }}
       onKeyDown={(e) => {
         if (e.key === 'Escape') ctl.closeCard();
       }}

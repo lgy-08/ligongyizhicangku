@@ -1,5 +1,6 @@
 import type { CaptionCue } from '../captions/types';
 import type { Annotation, LookupResult, ReminderResult } from '../storage/protocol';
+import type { TranscriptItem } from './transcript';
 import { DEFAULT_SETTINGS, type Settings, type VocabStatus } from '../vocab/types';
 
 export interface CardState {
@@ -7,7 +8,9 @@ export interface CardState {
   word: string;
   /** Position relative to the overlay root, in px. */
   x: number;
-  bottom: number;
+  /** Exactly one of bottom / top is set: the card opens above or below the clicked word. */
+  bottom: number | null;
+  top: number | null;
   loading: boolean;
   result: LookupResult | null;
   error: string | null;
@@ -31,6 +34,8 @@ export interface OverlayState {
   liveText: string | null;
   /** YouTube CC button state; null when unknown. */
   ccOn: boolean | null;
+  /** Captions seen so far in this video (best effort), in video order, with gap markers. Session only. */
+  transcript: TranscriptItem[];
 }
 
 export type CaptionMode = 'file' | 'youtube' | 'none';
@@ -55,6 +60,7 @@ export const initialOverlayState = (): OverlayState => ({
   reminder: null,
   liveText: null,
   ccOn: null,
+  transcript: [],
 });
 
 /** CSS class for a word given its annotation and the settings. Pure, unit-tested. */

@@ -4,7 +4,9 @@ import type { Annotation, LlRequest, LlResponse, LookupResult, ReminderResult } 
 import type { CustomDefinition, Settings, VocabRecord, VocabStatus } from '../vocab/types';
 import type { PlayerEventType, PlayerSession } from '../youtube/player-session';
 import { CueSync } from './cue-sync';
+import { readVisibleCaptionText } from '../youtube/caption-dom-observer';
 import { LiveCaptions } from './live-captions';
+import { buildTranscriptView, Coverage, LiveTranscript } from './transcript';
 import { applyStatus, captionMode, initialOverlayState, type OverlayState } from './overlay-state';
 import { createStore, type Store } from './store';
 
@@ -50,14 +52,21 @@ export class OverlayController {
     });
     this.store.set({ ...initialOverlayState(), settings: this.settings, videoId });
     if (!session.video.paused) this.sync.play();
+    this.playerEl = playerEl ?? null;
     if (playerEl) {
       this.live = new LiveCaptions({
         root: playerEl,
         onChange: (text, ccOn) => {
           this.store.set({ liveText: text, ccOn });
+          // Text already on screen when the session starts may belong to the previous video:
+          // shown, but not recorded until the caption changes.
+          const stale = this.staleText !== undefined && text === this.staleText;
+          if (!stale) this.staleText = undefined;
+          if (text && !stale) this.recordLive(text);
           if (text && captionMode(this.store.get()) === 'youtube') void this.annotateLive(text);
         },
       });
+      this.staleText = readVisibleCaptionText(playerEl) ?? undefined;
       this.live.start();
       this.applyNativeHidden();
     }
@@ -71,6 +80,10 @@ export class OverlayController {
     this.sync = null;
     this.live?.dispose(); // also restores YouTube's own caption box
     this.live = null;
+    this.playerEl = null;
+    this.staleText = undefined;
+    this.transcript.clear(); // session only: nothing carries over to the next video
+    this.coverage.clear();
     this.pendingWords.clear();
     this.session = null;
     this.pausedByUs = false;
@@ -80,7 +93,36 @@ export class OverlayController {
   // ---------- YouTube on-screen captions ("best effort") ----------
 
   private live: LiveCaptions | null = null;
+  private playerEl: Element | null = null;
+  /** Caption text visible at session start; not recorded until the text changes. */
+  private staleText: string | undefined = undefined;
   private readonly pendingWords = new Set<string>();
+  private readonly transcript = new LiveTranscript();
+  private readonly coverage = new Coverage();
+
+  /** YouTube marks the player with "ad-showing" while an ad plays; ad captions are not recorded. */
+  private isAdShowing(): boolean {
+    return this.playerEl?.classList.contains('ad-showing') ?? false;
+  }
+
+  private nowMs(): number {
+    return this.session?.snapshot().currentTimeMs ?? Number.NaN;
+  }
+
+  /** Adds every visible caption line to the session transcript, ordered by video time. */
+  private recordLive(text: string): void {
+    if (this.isAdShowing()) return;
+    const t = this.nowMs();
+    if (!Number.isFinite(t)) return;
+    this.coverage.note(t);
+    let changed = false;
+    for (const line of text.split('\n')) changed = this.transcript.add(line, t) || changed;
+    if (changed) this.publishTranscript();
+  }
+
+  private publishTranscript(): void {
+    this.store.set({ transcript: buildTranscriptView(this.transcript.all, this.coverage) });
+  }
 
   /** YouTube's caption box is hidden only while our overlay shows that same text. */
   private applyNativeHidden(): void {
@@ -112,6 +154,9 @@ export class OverlayController {
   onPlayerEvent(type: PlayerEventType): void {
     const sync = this.sync;
     if (!sync) return;
+    if (type === 'seeking') this.coverage.break();
+    else if (type === 'timeupdate' && !this.session?.video.seeking && !this.isAdShowing()) this.coverage.note(this.nowMs());
+    else if (type === 'seeked' && this.transcript.size > 0) this.publishTranscript();
     switch (type) {
       case 'play':
       case 'playing':
@@ -187,10 +232,11 @@ export class OverlayController {
 
   // ---------- word card ----------
 
-  async openCard(word: string, x: number, bottom: number): Promise<void> {
+  /** Position in px relative to the overlay: pass `bottom` (card above the word) or `top` (below it). */
+  async openCard(word: string, x: number, bottom: number | null, top: number | null = null): Promise<void> {
     const epoch = this.epoch;
     this.store.set({
-      card: { word, x, bottom, loading: true, result: null, error: null, editing: false, saving: false },
+      card: { word, x, bottom: top === null ? (bottom ?? 0) : null, top, loading: true, result: null, error: null, editing: false, saving: false },
       menuOpen: false,
     });
     const video = this.session?.video;

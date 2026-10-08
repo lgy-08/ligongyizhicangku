@@ -2,6 +2,8 @@
 
 沉浸式英语学习 Chrome 扩展（Manifest V3）。在 YouTube 观看页导入 SRT/VTT 字幕，字幕随播放同步显示；点击单词查看释义，标记“认识 / 半熟 / 不认识”；数据只保存在本机，可导出 JSON 备份。
 
+**使用和检测请先看 [项目说明.md](./项目说明.md)。**
+
 当前阶段：**LL-002 最小可用版本**。设计见 [ARCHITECTURE.md](./ARCHITECTURE.md)，阶段报告见 [docs/LL-002-report.md](./docs/LL-002-report.md)，手动验收清单见 [docs/manual-test.md](./docs/manual-test.md)，技术验证见 [FEASIBILITY_REPORT.md](./FEASIBILITY_REPORT.md)。
 
 ## 环境
