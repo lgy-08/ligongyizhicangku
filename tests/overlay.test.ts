@@ -380,6 +380,67 @@ describe('OverlayController', () => {
     player.remove();
   });
 
+  it('dragging back to the start: beginning captions shown before the video time changes are not appended at the bottom', async () => {
+    const r = overlayRig();
+    const player = document.createElement('div');
+    document.body.append(player);
+    r.ctl.attachSession(r.session, 'AAAAAAAAAAA', player);
+    r.state.paused = false;
+    const at = async (sec: number, lines: string[] | null) => {
+      r.state.t = sec;
+      r.ctl.onPlayerEvent('timeupdate');
+      renderCaption(player, lines);
+      await flush();
+    };
+    const lines = () => r.ctl.store.get().transcript.flatMap((i) => (i.kind === 'line' ? [i.line.text] : []));
+    await at(1, ['hello and welcome to my channel']);
+    await at(5, ['today we are going to cook pasta']);
+    await at(120, ['and that is how you drain it']); // (time continues; jump check uses wall clock, so feed timeupdates)
+    expect(lines()).toEqual(['hello and welcome to my channel', 'today we are going to cook pasta', 'and that is how you drain it']);
+
+    // User drags to the start. YouTube already shows the beginning captions while video time is still ~120 s.
+    renderCaption(player, ['hello and welcome to my channel']);
+    await flush();
+    renderCaption(player, ['today we are going to cook pasta']);
+    await flush();
+    // Then the real seek events arrive.
+    r.ctl.onPlayerEvent('seeking');
+    r.state.t = 0.5;
+    r.ctl.onPlayerEvent('seeked');
+    await settle();
+    await at(1, ['hello and welcome to my channel']);
+    await at(5, ['today we are going to cook pasta']);
+
+    expect(lines()).toEqual(['hello and welcome to my channel', 'today we are going to cook pasta', 'and that is how you drain it']);
+    expect(r.ctl.debugLog.some((l) => l.includes('duplicate-far'))).toBe(true);
+    expect(r.ctl.debugLog.some((l) => l.includes('suspected seek'))).toBe(true);
+    player.remove();
+  });
+
+  it('detects a seek from the time jump even before the "seeking" event arrives', async () => {
+    const r = overlayRig();
+    const player = document.createElement('div');
+    document.body.append(player);
+    r.ctl.attachSession(r.session, 'AAAAAAAAAAA', player);
+    r.state.paused = false;
+    r.state.t = 120;
+    r.ctl.onPlayerEvent('timeupdate');
+    renderCaption(player, ['a line near the end of the video']);
+    await flush();
+    // video time already moved to 2 s, caption changed, no seeking event yet
+    r.state.t = 2;
+    renderCaption(player, ['a brand new line from the beginning']);
+    await flush();
+    expect(r.ctl.debugLog.some((l) => l.includes('suspected seek: time jumped to 2.00s'))).toBe(true);
+    await settle();
+    const t = r.ctl.store.get().transcript.flatMap((i) => (i.kind === 'line' ? [[i.line.text, i.line.timeMs]] : []));
+    expect(t).toEqual([
+      ['a brand new line from the beginning', 2000],
+      ['a line near the end of the video', 120000],
+    ]);
+    player.remove();
+  });
+
   it('a caption first seen after a seek is recorded at the seek target, in order', async () => {
     const r = overlayRig();
     const player = document.createElement('div');

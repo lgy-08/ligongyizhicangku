@@ -91,6 +91,7 @@ export class OverlayController {
     this.staleText = undefined;
     if (this.settle?.timer) clearTimeout(this.settle.timer);
     this.settle = null;
+    this.lastObs = null;
     this.debugLog.length = 0;
     this.transcript.clear(); // session only: nothing carries over to the next video
     this.coverage.clear();
@@ -155,26 +156,78 @@ export class OverlayController {
     if (s.timer) clearTimeout(s.timer);
     const text = this.live?.text;
     this.log(`settled${text ? '' : ' (no caption)'}`, s.target ?? Number.NaN);
+    this.observe(); // new baseline for jump detection
     if (text && s.target !== null && this.staleText === undefined) this.recordLive(text, s.target);
+  }
+
+  /** Last trusted observation of playback: media time, wall-clock time, rate, paused. */
+  private lastObs: { media: number; wall: number; rate: number; paused: boolean } | null = null;
+  /** A media time differing from the expected one by more than this means a seek happened. */
+  static readonly JUMP_MS = 2500;
+
+  private observe(): void {
+    const v = this.session?.video;
+    const t = this.nowMs();
+    if (!v || !Number.isFinite(t)) return;
+    this.lastObs = { media: t, wall: Date.now(), rate: v.playbackRate || 1, paused: v.paused };
+  }
+
+  /**
+   * Detects a seek from the media time itself, without waiting for the "seeking" event (which is
+   * dispatched asynchronously and can arrive AFTER YouTube has already swapped the caption text).
+   */
+  private jumpedSinceLastObs(now: number): boolean {
+    const o = this.lastObs;
+    if (!o) return false;
+    const expected = o.paused ? o.media : o.media + (Date.now() - o.wall) * o.rate;
+    return Math.abs(now - expected) > OverlayController.JUMP_MS;
+  }
+
+  /** Pause recording as if a seek had just finished at the current time. */
+  private suspectSeek(reason: string): void {
+    this.log(`suspected seek: ${reason}`);
+    this.coverage.break();
+    this.startSettle();
+    this.seekDone();
   }
 
   /** Adds every visible caption line to the session transcript, ordered by video time. */
   private recordLive(text: string, at?: number): void {
     if (this.isAdShowing()) return;
+    const preview = text.replace(/\n/g, ' / ').slice(0, 60);
     if (this.settle) {
-      this.log(`skip (settling after seek): "${text.replace(/\n/g, ' / ').slice(0, 60)}"`);
+      this.log(`skip (settling after seek): "${preview}"`);
       return;
+    }
+    if (at === undefined) {
+      const now = this.nowMs();
+      if (this.session?.video.seeking) {
+        this.suspectSeek('video.seeking is true');
+        this.log(`skip (settling after seek): "${preview}"`);
+        return;
+      }
+      if (this.jumpedSinceLastObs(now)) {
+        this.suspectSeek(`time jumped to ${(now / 1000).toFixed(2)}s`);
+        this.log(`skip (settling after seek): "${preview}"`);
+        return;
+      }
     }
     const t = at ?? this.nowMs();
     if (!Number.isFinite(t)) return;
     this.coverage.note(t);
+    this.observe();
     let changed = false;
+    let far = false;
     for (const line of text.split('\n')) {
       const r = this.transcript.add(line, t);
       if (line.trim()) this.log(`${r}: "${line.slice(0, 60)}"`, t);
       if (r === 'added' || r === 'grew') changed = true;
+      if (r === 'duplicate-far') far = true;
     }
     if (changed) this.publishTranscript();
+    // A long line we already have at a very different time: the caption and the video time disagree
+    // (e.g. YouTube shows captions for the scrub position before the video has seeked). Stop recording briefly.
+    if (far) this.suspectSeek('caption already recorded at a distant time');
   }
 
   private publishTranscript(): void {
@@ -221,6 +274,10 @@ export class OverlayController {
       if (this.transcript.size > 0) this.publishTranscript();
     } else if (type === 'timeupdate' && !this.settle && !this.session?.video.seeking && !this.isAdShowing()) {
       this.coverage.note(this.nowMs());
+      this.observe();
+    } else if (type === 'play' || type === 'playing' || type === 'pause' || type === 'ratechange') {
+      // 'playing' also follows a buffering stall, during which media time did not advance.
+      this.observe();
     }
     switch (type) {
       case 'play':

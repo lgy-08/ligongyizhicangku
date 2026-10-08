@@ -45,6 +45,25 @@ describe('LiveTranscript', () => {
     expect(texts(t)).toEqual(['so we were running', 'late and then the bus']);
   });
 
+  it('a long line already recorded at a distant time is a "duplicate-far", a short one may repeat', () => {
+    const t = new LiveTranscript();
+    t.add('welcome back to the channel everyone', 2_000);
+    t.add('Thank you.', 3_000);
+    expect(t.add('Welcome back to the channel, everyone!', 300_000)).toBe('duplicate-far');
+    expect(t.add('Thank you.', 300_000)).toBe('added');
+    expect(texts(t)).toEqual(['welcome back to the channel everyone', 'Thank you.', 'Thank you.']);
+  });
+
+  it('the whole-video check follows lines that grew', () => {
+    const t = new LiveTranscript();
+    t.add('so today we', 1_000);
+    t.add('so today we are going to cook', 1_500); // grew
+    expect(t.add('so today we are going to cook', 200_000)).toBe('duplicate-far');
+    expect(t.add('so today we', 200_000)).toBe('added'); // short (3 words): allowed to repeat far away
+    t.clear();
+    expect(t.add('so today we are going to cook', 200_000)).toBe('added');
+  });
+
   it('matches prefixes on whole words only', () => {
     const t = new LiveTranscript();
     t.add('the', 1_000);

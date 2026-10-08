@@ -20,11 +20,17 @@ export type AddResult =
   | 'grew' // an existing nearby line was extended (auto-captions grow word by word)
   | 'duplicate' // same text (ignoring case/punctuation) already nearby, or a shorter prefix of it
   | 'contained' // text already present inside the neighbouring lines (auto-captions re-wrapped differently)
+  | 'duplicate-far' // a long line identical to one recorded at a DISTANT time: the current time is not trustworthy
   | 'invalid'
   | 'full';
 
 /** Lines whose recorded times are within this window are compared for duplicates. */
 export const DEDUPE_WINDOW_MS = 10_000;
+/**
+ * Lines with at least this many words are unique across the whole video: an identical long line at a
+ * distant time is treated as a mis-timed duplicate, not as a real repeat. Short lines ("Thank you.") may repeat.
+ */
+export const GLOBAL_DEDUPE_MIN_WORDS = 4;
 export const MAX_LINES = 5000;
 
 /** Comparison key: lowercase, punctuation removed (apostrophes kept), single spaces. */
@@ -41,7 +47,15 @@ const startsWithWords = (whole: string, prefix: string) => whole === prefix || w
 
 export class LiveTranscript {
   private readonly lines: TranscriptLine[] = [];
+  /** How many lines currently have each key (for the whole-video duplicate check). */
+  private readonly keyCount = new Map<string, number>();
   private seq = 0;
+
+  private countKey(key: string, delta: number): void {
+    const n = (this.keyCount.get(key) ?? 0) + delta;
+    if (n > 0) this.keyCount.set(key, n);
+    else this.keyCount.delete(key);
+  }
 
   get size(): number {
     return this.lines.length;
@@ -68,20 +82,25 @@ export class LiveTranscript {
     }
     for (let i = 0; i < neighbours.length; i++) {
       if (startsWithWords(key, keys[i]!)) {
+        this.countKey(keys[i]!, -1);
+        this.countKey(key, 1);
         neighbours[i]!.text = text; // grew: keep the original first-seen time
         return 'grew';
       }
     }
     if (` ${keys.join(' ')} `.includes(` ${key} `)) return 'contained';
+    if (key.split(' ').length >= GLOBAL_DEDUPE_MIN_WORDS && this.keyCount.has(key)) return 'duplicate-far';
 
     if (this.lines.length >= MAX_LINES) return 'full';
     const line: TranscriptLine = { id: ++this.seq, text, timeMs };
     this.lines.splice(this.lowerBound(timeMs + 0.5), 0, line); // after lines with the same time
+    this.countKey(key, 1);
     return 'added';
   }
 
   clear(): void {
     this.lines.length = 0;
+    this.keyCount.clear();
   }
 
   /** First index with timeMs >= t. */
