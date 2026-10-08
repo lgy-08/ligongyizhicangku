@@ -1,0 +1,52 @@
+:root {
+  --bg: #f7f7f8;
+  --fg: #1d1d1f;
+  --muted: #6b6b70;
+  --card: #ffffff;
+  --border: #dcdce0;
+  --accent: #2f6fdb;
+  --ok: #1f7a3a;
+  --err: #b3261e;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #18181a;
+    --fg: #ececee;
+    --muted: #9a9aa0;
+    --card: #222225;
+    --border: #3a3a3e;
+    --accent: #7aa7ff;
+    --ok: #6fd08a;
+    --err: #ff8f80;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.6 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }
+main { max-width: 920px; margin: 0 auto; padding: 24px 16px 64px; }
+h1 { font-size: 22px; margin: 0 0 16px; }
+h2 { font-size: 16px; margin: 0 0 8px; }
+section { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+.muted { color: var(--muted); }
+.small { font-size: 12px; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
+button, .file, select, input[type="number"], .search {
+  font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px;
+}
+button, .file { cursor: pointer; }
+button:hover, .file:hover { border-color: var(--accent); }
+button.on { border-color: var(--accent); color: var(--accent); }
+button.small { padding: 1px 6px; font-size: 12px; }
+.file input { display: none; }
+.search { margin-left: auto; min-width: 180px; }
+input[type="number"] { width: 90px; margin: 0 6px; padding: 2px 6px; }
+.check { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+td.lemma { font-weight: 600; }
+td.def { max-width: 260px; white-space: pre-line; }
+.notice { padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border); }
+.notice.ok { color: var(--ok); }
+.notice.err { color: var(--err); }
+.notice button { margin-left: 8px; font-size: 12px; padding: 0 6px; }
+a { color: var(--accent); }

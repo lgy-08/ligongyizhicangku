@@ -1,7 +1,8 @@
-# LinguaLens（LL-001 技术可行性原型）
+# LinguaLens
 
-沉浸式英语学习 Chrome 扩展的**技术可行性验证原型**。本阶段不是产品，界面只是诊断面板。
-验证结论见 [FEASIBILITY_REPORT.md](./FEASIBILITY_REPORT.md)。
+沉浸式英语学习 Chrome 扩展（Manifest V3）。在 YouTube 观看页导入 SRT/VTT 字幕，字幕随播放同步显示；点击单词查看释义，标记“认识 / 半熟 / 不认识”；数据只保存在本机，可导出 JSON 备份。
+
+当前阶段：**LL-002 最小可用版本**。设计见 [ARCHITECTURE.md](./ARCHITECTURE.md)，阶段报告见 [docs/LL-002-report.md](./docs/LL-002-report.md)，手动验收清单见 [docs/manual-test.md](./docs/manual-test.md)，技术验证见 [FEASIBILITY_REPORT.md](./FEASIBILITY_REPORT.md)。
 
 ## 环境
 
@@ -11,66 +12,78 @@
 | npm | 11.19.0 |
 | Chrome | 154.0.8037.98 |
 
-技术栈：WXT 0.21.4 + TypeScript 5.9.3 + Manifest V3 + Vitest 5.0.3（DOM 测试用 happy-dom）。
-TypeScript 固定在 5.9.3：7.x 是原生重写版，与 WXT/Vitest 工具链的兼容性未验证。
+技术栈：WXT 0.21.4、TypeScript 5.9.3、React 19.3、Manifest V3、Vitest 5.0.3。
 
 ## 安装与构建
 
 ```powershell
 cd D:\Projects\LinguaLens
-npm install          # 只安装到项目内 node_modules，postinstall 会运行 wxt prepare
-npm run compile      # tsc 类型检查
-npm test             # Vitest 单元测试
-npm run build        # 产物在 .output\chrome-mv3
+npm install                    # 依赖只装在项目内，postinstall 会运行 wxt prepare
+npm run dict -- --download     # 下载 ECDICT（约 66 MB）并生成精简词典，只需一次
+npm run build                  # 产物在 .output\chrome-mv3
 ```
 
-开发模式可用 `npm run dev`。它会让 WXT 启动一个独立的 Chrome 实例并自动加载扩展。LL-001 的验收以手动加载生产构建为准。
+- 词典源文件放在 `data-src\`，生成的 `public\dict\ecdict-lite.json` 约 4.3 MB。两者都不提交到 Git，由脚本在本地重新生成。
+- 已经下载过 `data-src\ecdict.csv` 时，直接运行 `npm run dict` 即可。
+- 不生成词典也能构建和使用，但查词时会提示“词典未加载”，只能使用“我的释义”。
 
 ## 在 Chrome 中加载
 
-1. 先运行 `npm run build`。
-2. 打开 `chrome://extensions`。
-3. 打开右上角“开发者模式”。这是加载未打包扩展的必要开关，需要你自己操作。
-4. 点击“加载已解压的扩展程序”，选择 `D:\Projects\LinguaLens\.output\chrome-mv3`。
-5. 打开任意 `https://www.youtube.com/watch?v=...` 页面，右下角会出现 “LinguaLens LL-001” 诊断面板。
-6. 代码修改后重新 `npm run build`，再在扩展卡片上点“重新加载”，并刷新 YouTube 页面。
+1. 打开 `chrome://extensions`，打开右上角“开发者模式”。
+2. 点击“加载已解压的扩展程序”，选择 `D:\Projects\LinguaLens\.output\chrome-mv3`。
+3. 打开任意 `https://www.youtube.com/watch?v=...`，视频左上角会出现半透明的 “LL” 按钮。
+4. 代码修改后重新 `npm run build`，在扩展卡片上点“重新加载”，再刷新 YouTube 页面。
 
-扩展**不申请任何 permissions 或 host_permissions**，只在 `*://www.youtube.com/*` 注入两个内容脚本：
+扩展**不申请任何 permissions 或 host_permissions**，只在 `www.youtube.com` 注入内容脚本。
 
-- `youtube.js`（隔离环境）：负责播放器监听、诊断面板、字幕层和 SRT/VTT 导入。
-- `youtube-probe.js`（MAIN world）：只读取字幕轨道的**元数据**，不请求 timedtext 接口，也不转发 baseUrl。
+## 使用
 
-## 诊断面板功能
+1. 在观看页点 “LL” → “导入字幕文件…”，选择与视频对应的 `.srt` 或 `.vtt` 文件。建议关闭 YouTube 自带的 CC。
+2. 字幕显示在视频下方。点击任意单词打开词卡：
+   - 显示词元（例如 ran → run）、音标和中文释义。
+   - 词典里没有的词会显示“暂无释义”，可以“添加我的释义”。
+   - 点“认识 / 半熟 / 不认识”标记；同一词元的所有词形一起高亮。
+3. “LL” → “字幕列表”可以点击任一句跳转。
+4. 点击浏览器工具栏中的扩展图标，或 “LL” → “生词本 / 备份 / 设置”，打开设置页。
 
-| 区块 | 作用 |
-|---|---|
-| Player | 当前时间、时长、播放状态 |
-| Events | play / pause / seeking / seeked / loadedmetadata 等事件日志，以及导航状态 |
-| Caption tracks | 字幕轨道元数据：语言、人工或自动、是否有 baseUrl（不使用） |
-| YouTube on-screen caption | 从页面字幕 DOM 观察到的当前文字，以及据此生成的 `estimated` 字幕条数 |
-| Storage channel | “Counter +1” 写入、“Read counter” 读取、“SW status” 显示 service worker 实例 ID |
-| Import SRT / VTT | 导入本地字幕文件，点击任一行跳转到对应时间，播放时在视频上方叠加显示 |
-| Copy diagnostics JSON | 把面板数据复制到剪贴板，用于填写测试结果 |
+## 导出与备份学习数据
 
-示例字幕文件在 `fixtures/` 目录：`sample-en.srt`、`sample-en.vtt`，以及用于验证错误提示的 `broken.srt`。
+学习数据存在 Chrome 扩展自己的 IndexedDB 中，**不在项目目录里，GitHub 也不会备份它**。卸载扩展或清除浏览器数据会删除它。
+
+- **导出**：设置页 →“导出 JSON 备份”，得到 `lingualens-backup-YYYYMMDD-HHmm.json`。文件带 `format` 和 `schemaVersion`，包含生词状态、我的释义和设置。
+- **导入**：设置页 →“从 JSON 导入…”。同一个词以修改时间较新的记录为准，不会删除本机已有的词。
+- **提醒**：超过设定天数（默认 30 天）未导出时，观看页右下角会轻提示一次，可以选择“不再提示”。
+
+## 测试
+
+```powershell
+npm run compile   # tsc 类型检查
+npm test          # Vitest 单元测试
+```
+
+单元测试覆盖字幕解析、时间同步、词形还原、词典生成、状态存储（fake-indexeddb 上运行真实的 IndexedDB 代码）、导出导入和提醒规则。它们**不能代替真实 Chrome 验收**，真实环境请按 [docs/manual-test.md](./docs/manual-test.md) 执行。
 
 ## 目录结构
 
 ```
 entrypoints/
-  background.ts             service worker：IndexedDB + 消息路由
-  youtube.content.ts        隔离环境内容脚本
-  youtube-probe.content.ts  MAIN world 字幕轨道元数据探测
+  background.ts             service worker：IndexedDB、词典、消息路由
+  youtube.content.ts        观看页内容脚本：导航、播放器、叠加层、诊断
+  youtube-probe.content.ts  MAIN world 字幕轨道元数据探测（诊断用）
+  options/                  生词本与设置页（React）
 src/
-  captions/   CaptionCue 类型、SRT/VTT 解析器、时间匹配 CueIndex
-  youtube/    URL 识别、PlayerSession、WatchController（SPA 导航）、字幕 DOM 观察器、轨道探测
-  storage/    消息协议、background 路由、IndexedDB 实现、content 端客户端
-  ui/         诊断面板（shadow DOM）、字幕叠加层
+  captions/   SRT/VTT 解析、CueIndex
+  dict/       词典、分词、词形还原、加载器
+  vocab/      生词状态、设置、备份格式、提醒规则
+  storage/    消息协议、路由、IndexedDB、客户端
+  youtube/    URL、播放器会话、导航控制、诊断用字幕探测
+  content/    叠加层状态、字幕同步、控制器、React 界面
+scripts/      build-dict.mjs（ECDICT → 精简词典）
 tests/        Vitest 单元测试
 fixtures/     手动测试用字幕文件
+docs/         阶段报告与手动验收清单
 ```
 
-## 测试说明
+## 许可与数据来源
 
-`npm test` 运行的是**单元测试**：解析器、时间匹配、监听器注册与清理、导航状态重置、缺字幕或缺播放器场景、存储消息路由。
-它们使用 happy-dom 和内存存储，**不能代替真实 Chrome 验收**。真实浏览器测试步骤和结果记录见 FEASIBILITY_REPORT.md 第 8 节。
+词典数据来自 [ECDICT](https://github.com/skywind3000/ECDICT)，MIT License，Copyright (c) 2025 Linwei。许可证全文随扩展打包在 `dict/LICENSE-ECDICT.txt`。同一仓库中的 `lemma.en.txt` 声明“仅供研究和教育用途”，许可证不明确，本项目不使用。

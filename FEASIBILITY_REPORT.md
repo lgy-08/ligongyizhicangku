@@ -89,7 +89,8 @@
 
 | 候选 | 许可证 | 体积（npm 解包后） | 说明 |
 |---|---|---|---|
-| ECDICT exchange 字段 + lemma.en.txt | MIT | 随词典数据，无需额外代码 | 查表方式，能覆盖 ran→run 这类不规则变化；生僻词需要规则兜底 |
+| ECDICT exchange 字段 | MIT | 随词典数据，无需额外代码 | 查表方式，能覆盖 ran→run 这类不规则变化；生僻词需要规则兜底 |
+| ~~lemma.en.txt~~ | **不可用** | 2.3 MB | LL-002 更正：该文件头部声明“仅供研究和教育用途”，与仓库 MIT 不一致，许可证不明确，不使用 |
 | wink-lemmatizer 3.0.4 | MIT | 35 KB，但依赖 wink-lexicon（12,274 KB） | 基于 WordNet 数据。依赖体积大，最后发布于 2023 年 |
 | compromise 14.18.0 | MIT | 2,671 KB | 完整 NLP 库，能做词形还原和词性标注；仍在活跃维护 |
 | wink-nlp 2.4.0 + wink-eng-lite-web-model 1.8.1 | MIT | 640 KB + 3,735 KB | 需要语言模型，体积大 |

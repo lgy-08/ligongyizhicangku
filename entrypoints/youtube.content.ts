@@ -1,10 +1,11 @@
 import { browser } from 'wxt/browser';
 import { defineContentScript } from 'wxt/utils/define-content-script';
-import { CueIndex, parseCaptionFile, type CaptionCue } from '../src/captions';
+import type { CaptionCue } from '../src/captions';
 import { formatTimestamp } from '../src/captions/text';
+import { OverlayController, type CallFn } from '../src/content/overlay-controller';
+import { mountOverlay } from '../src/content/mount';
 import { sendLl } from '../src/storage/client';
 import type { KvRecord, LlRequest, SwStatus } from '../src/storage/protocol';
-import { CaptionLayer } from '../src/ui/caption-layer';
 import { createPanel } from '../src/ui/panel';
 import { CaptionDomObserver } from '../src/youtube/caption-dom-observer';
 import type { PlayerSession, PlayerSnapshot } from '../src/youtube/player-session';
@@ -62,7 +63,10 @@ export default defineContentScript({
   runAt: 'document_idle',
   main(ctx) {
     const send = (msg: LlRequest) => browser.runtime.sendMessage(msg);
+    const call: CallFn = (msg) => sendLl(send, msg);
+    const overlay = new OverlayController(call);
 
+    // ---------- LL-001 diagnostics (hidden unless enabled in settings) ----------
     const diag = {
       startedAt: new Date().toISOString(),
       userAgent: navigator.userAgent,
@@ -73,25 +77,21 @@ export default defineContentScript({
       probe: null as TrackProbeResult | null,
       nativeTextTracks: null as number | null,
       dom: { visibleText: null as string | null, estimatedCues: [] as CaptionCue[] },
-      imported: null as { fileName: string; format: string; count: number; warnings: string[] } | null,
+      overlay: null as unknown,
       storage: [] as string[],
       swInstancesSeen: [] as string[],
       controllerStats: null as unknown,
     };
+    let diagnosticsOn = false;
     const pushEvent = (line: string) => {
       diag.events.push(line);
       if (diag.events.length > 80) diag.events.shift();
       panel.log(line);
     };
 
-    let imported: CueIndex | null = null;
-    let domObs: CaptionDomObserver | null = null;
-    let lastPlaybackMs = 0;
-    const layer = new CaptionLayer();
-
     const storageCall = async (label: string, msg: LlRequest) => {
       const t0 = performance.now();
-      const res = await sendLl<unknown>(send, msg);
+      const res = await call<unknown>(msg);
       const ms = Math.round(performance.now() - t0);
       let line: string;
       if (!res.ok) line = `${label}: ERROR ${res.error} (${ms}ms)`;
@@ -107,57 +107,14 @@ export default defineContentScript({
       panel.setStorage(diag.storage.slice(-6).join('\n'));
     };
 
-    const updateActiveCue = (timeMs: number) => {
-      if (!imported) return;
-      const active = imported.activeAt(timeMs);
-      const cue = active[active.length - 1] ?? null;
-      panel.highlightCue(cue?.id ?? null);
-      if (cue) layer.show(active.map((c) => c.text).join('\n'), `${cue.source} · exact`);
-      else layer.hide();
-    };
-
-    const clearImported = () => {
-      imported = null;
-      diag.imported = null;
-      panel.setCues([]);
-      panel.setImportMessage('', false);
-      layer.hide();
-    };
-
     const panel = createPanel({
       onIncrement: () => void storageCall('increment', { type: 'll/counter-increment', key: COUNTER_KEY }),
       onRead: () => void storageCall('read', { type: 'll/kv-get', key: COUNTER_KEY }),
       onSwStatus: () => void storageCall('sw-status', { type: 'll/sw-status' }),
-      onFile: async (file) => {
-        try {
-          const text = await file.text();
-          const res = parseCaptionFile(text, file.name);
-          imported = new CueIndex(res.cues);
-          diag.imported = { fileName: file.name, format: res.format, count: res.cues.length, warnings: res.warnings };
-          panel.setCues(imported.cues);
-          panel.setImportMessage(
-            `${res.format.toUpperCase()} ${res.cues.length} cues${res.warnings.length ? `, ${res.warnings.length} warning(s): ${res.warnings.slice(0, 3).join('; ')}` : ''}`,
-            false,
-          );
-          const s = controller.activeSession?.snapshot();
-          if (s) updateActiveCue(s.currentTimeMs);
-        } catch (err) {
-          clearImported();
-          panel.setImportMessage(err instanceof Error ? err.message : String(err), true);
-        }
-      },
-      onClearCues: clearImported,
-      onCueClick: (cue) => {
-        const session = controller.activeSession;
-        if (!session) {
-          panel.setImportMessage('no active player session', true);
-          return;
-        }
-        session.seekTo(cue.startMs);
-        pushEvent(`jump -> ${formatTimestamp(cue.startMs)} (${cue.id})`);
-      },
       onCopyDiagnostics: () => {
         diag.controllerStats = { ...controller.stats, liveSessions: controller.liveSessionCount };
+        const o = overlay.store.get();
+        diag.overlay = { fileName: o.fileName, cues: o.cues?.length ?? 0, activeCues: o.activeCues.map((c) => c.id), annotated: Object.keys(o.annotations).length };
         const json = JSON.stringify(diag, null, 2);
         navigator.clipboard.writeText(json).then(
           () => pushEvent('diagnostics copied to clipboard'),
@@ -167,8 +124,10 @@ export default defineContentScript({
     });
     panel.setVisible(false);
 
-    const startSession = (session: PlayerSession, videoId: string) => {
-      const playerEl = document.getElementById('movie_player');
+    let domObs: CaptionDomObserver | null = null;
+    let lastPlaybackMs = 0;
+
+    const startDiagnostics = (session: PlayerSession, videoId: string, playerEl: HTMLElement): (() => void) => {
       diag.nativeTextTracks = session.video.textTracks?.length ?? null;
       diag.dom = { visibleText: null, estimatedCues: [] };
       diag.probe = null;
@@ -176,26 +135,19 @@ export default defineContentScript({
       panel.setPlayer(fmtSnap(session.snapshot()));
       panel.setDomCaption('-');
       panel.setProbe('probing...');
-
-      if (playerEl) {
-        layer.attach(playerEl);
-        domObs = new CaptionDomObserver({
-          root: playerEl,
-          getTimeMs: () => session.snapshot().currentTimeMs,
-          onChange: (text, cues) => {
-            diag.dom = { visibleText: text, estimatedCues: [...cues] };
-            panel.setDomCaption(
-              `visible: ${text ?? '(none)'}\nestimated cues collected: ${cues.length}` +
-                (cues.length ? `\nlast: [${formatTimestamp(cues[cues.length - 1]!.startMs)}-${formatTimestamp(cues[cues.length - 1]!.endMs)}] ${cues[cues.length - 1]!.text}` : ''),
-            );
-          },
-        });
-        domObs.start();
-      } else {
-        panel.setDomCaption('#movie_player not found');
-      }
-
-      // Probe caption-track metadata; retry while the player response still belongs to the previous video.
+      domObs = new CaptionDomObserver({
+        root: playerEl,
+        getTimeMs: () => session.snapshot().currentTimeMs,
+        onChange: (text, cues) => {
+          diag.dom = { visibleText: text, estimatedCues: [...cues] };
+          const last = cues[cues.length - 1];
+          panel.setDomCaption(
+            `visible: ${text ?? '(none)'}\nestimated cues collected: ${cues.length}` +
+              (last ? `\nlast: [${formatTimestamp(last.startMs)}-${formatTimestamp(last.endMs)}] ${last.text}` : ''),
+          );
+        },
+      });
+      domObs.start();
       let cancelled = false;
       void (async () => {
         let result: TrackProbeResult | null = null;
@@ -208,13 +160,24 @@ export default defineContentScript({
         diag.probe = result;
         panel.setProbe(`${describeProbe(result, videoId)}\nvideo.textTracks: ${diag.nativeTextTracks ?? 'n/a'}`);
       })();
-
       return () => {
         cancelled = true;
         domObs?.dispose();
         domObs = null;
-        layer.detach();
-        clearImported();
+      };
+    };
+
+    // ---------- per-video session ----------
+    const startSession = (session: PlayerSession, videoId: string) => {
+      const playerEl = document.getElementById('movie_player');
+      overlay.attachSession(session, videoId);
+      const unmount = playerEl ? mountOverlay(playerEl, overlay) : null;
+      if (!playerEl) pushEvent('#movie_player not found; overlay not mounted');
+      const stopDiag = diagnosticsOn && playerEl ? startDiagnostics(session, videoId, playerEl) : null;
+      return () => {
+        stopDiag?.();
+        unmount?.();
+        overlay.detachSession();
       };
     };
 
@@ -223,19 +186,17 @@ export default defineContentScript({
       onSessionStart: startSession,
       onStatus: (s) => {
         diag.status = s;
-        panel.setVisible(s.state !== 'idle');
+        panel.setVisible(diagnosticsOn && s.state !== 'idle');
         panel.setStatus(s.state === 'idle' ? 'idle' : `${s.state} ${s.videoId}`);
         pushEvent(`status ${s.state}${'videoId' in s ? ` ${s.videoId}` : ''}`);
       },
       onPlayerEvent: (type, snap) => {
-        if (type === 'seeking') {
-          domObs?.interrupt(lastPlaybackMs);
-        } else if (type === 'timeupdate' && !controller.activeSession?.video.seeking) {
-          lastPlaybackMs = snap.currentTimeMs;
-        }
+        overlay.onPlayerEvent(type);
+        if (!diagnosticsOn) return;
+        if (type === 'seeking') domObs?.interrupt(lastPlaybackMs);
+        else if (type === 'timeupdate' && !controller.activeSession?.video.seeking) lastPlaybackMs = snap.currentTimeMs;
         if (LOGGED_EVENTS.has(type)) pushEvent(`${type} @ ${formatTimestamp(snap.currentTimeMs)}`);
         panel.setPlayer(fmtSnap(snap));
-        updateActiveCue(snap.currentTimeMs);
       },
     });
 
@@ -245,14 +206,19 @@ export default defineContentScript({
       controller.handleUrl(url);
     };
 
-    onNav(location.href);
-    // WXT's SPA helper (URL polling) plus YouTube's own navigation event; handleUrl is idempotent.
-    ctx.addEventListener(window, 'wxt:locationchange', ({ newUrl }) => onNav(newUrl.href));
-    ctx.addEventListener(document, 'yt-navigate-finish' as keyof DocumentEventMap, () => onNav(location.href));
+    // Settings decide whether diagnostics run; navigation handling starts right after.
+    void overlay.loadSettings().finally(() => {
+      if (ctx.isInvalid) return;
+      diagnosticsOn = overlay.settings.showDiagnostics;
+      onNav(location.href);
+      // WXT's SPA helper (URL polling) plus YouTube's own navigation event; handleUrl is idempotent.
+      ctx.addEventListener(window, 'wxt:locationchange', ({ newUrl }) => onNav(newUrl.href));
+      ctx.addEventListener(document, 'yt-navigate-finish' as keyof DocumentEventMap, () => onNav(location.href));
+    });
 
     ctx.onInvalidated(() => {
       controller.dispose();
-      layer.detach();
+      overlay.dispose();
       panel.destroy();
     });
   },

@@ -1,0 +1,265 @@
+import { useEffect, useRef, useState, useSyncExternalStore, type MouseEvent } from 'react';
+import { formatTimestamp } from '../../captions/text';
+import { tokenize } from '../../dict/tokenize';
+import { STATUS_LABEL, VOCAB_STATUSES, type VocabStatus } from '../../vocab/types';
+import type { OverlayController } from '../overlay-controller';
+import { wordClass, type CardState, type OverlayState } from '../overlay-state';
+
+const CARD_WIDTH = 330;
+/** Prevents buttons from taking focus, so Space / K / F keep controlling the YouTube player. */
+const noFocus = (e: MouseEvent) => e.preventDefault();
+
+export function App({ ctl }: { ctl: OverlayController }) {
+  const s = useSyncExternalStore(ctl.store.subscribe, ctl.store.get);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  const onWordClick = (e: MouseEvent<HTMLSpanElement>, word: string) => {
+    const root = rootRef.current;
+    if (!root) return;
+    const r = root.getBoundingClientRect();
+    const w = e.currentTarget.getBoundingClientRect();
+    const center = w.left + w.width / 2 - r.left;
+    const x = Math.max(8, Math.min(center - CARD_WIDTH / 2, r.width - CARD_WIDTH - 8));
+    void ctl.openCard(word, x, r.bottom - w.top + 8);
+  };
+
+  return (
+    <div className="root" ref={rootRef}>
+      <Toolbar s={s} ctl={ctl} />
+      {s.listOpen && s.cues && <CueList s={s} ctl={ctl} />}
+      {s.activeCues.length > 0 && (
+        <div className="sub">
+          <div className="sub-box">
+            {s.activeCues.map((cue, ci) => (
+              <div key={cue.id}>
+                {ci > 0 && <br />}
+                {tokenize(cue.text).map((t, i) =>
+                  t.isWord ? (
+                    <span
+                      key={i}
+                      className={`${wordClass(s.annotations[t.text], s.settings)}${s.card?.word === t.text ? ' sel' : ''}`}
+                      onMouseDown={noFocus}
+                      onClick={(e) => onWordClick(e, t.text)}
+                    >
+                      {t.text}
+                    </span>
+                  ) : (
+                    <span key={i}>{t.text}</span>
+                  ),
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {s.card && <WordCard card={s.card} ctl={ctl} />}
+      {s.message && (
+        <div className={`msg ${s.message.kind}`}>
+          <span>{s.message.text}</span>
+          <button onMouseDown={noFocus} onClick={() => ctl.dismissMessage()}>
+            关闭
+          </button>
+        </div>
+      )}
+      {s.reminder?.remind && (
+        <div className="toast">
+          <div>
+            学习数据只保存在本机浏览器中{s.reminder.daysSinceExport !== null ? `，已 ${s.reminder.daysSinceExport} 天未导出备份` : ''}。
+          </div>
+          <div className="row">
+            <button onMouseDown={noFocus} onClick={() => void ctl.backupNow()}>
+              去备份
+            </button>
+            <button onMouseDown={noFocus} onClick={() => void ctl.dismissReminder(false)}>
+              稍后
+            </button>
+            <button onMouseDown={noFocus} onClick={() => void ctl.dismissReminder(true)}>
+              不再提示
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Toolbar({ s, ctl }: { s: OverlayState; ctl: OverlayController }) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  return (
+    <div className="bar">
+      <button className={`pill${s.menuOpen ? ' on' : ''}`} onMouseDown={noFocus} onClick={() => ctl.toggleMenu()} title="LinguaLens">
+        LL{s.cues ? ` · ${s.cues.length}` : ''}
+      </button>
+      <input
+        ref={fileRef}
+        type="file"
+        accept=".srt,.vtt,text/vtt"
+        hidden
+        onChange={(e) => {
+          const f = e.currentTarget.files?.[0];
+          e.currentTarget.value = '';
+          if (f) void ctl.importFile(f);
+        }}
+      />
+      {s.menuOpen && (
+        <div className="menu">
+          <div className="hint">
+            {s.cues ? `当前字幕：${s.fileName}（${s.cues.length} 条）` : '此视频尚未导入字幕。请导入与该视频对应的 SRT 或 VTT 文件。'}
+          </div>
+          <button onMouseDown={noFocus} onClick={() => fileRef.current?.click()}>
+            导入字幕文件…
+          </button>
+          <button onMouseDown={noFocus} disabled={!s.cues} onClick={() => ctl.toggleList()}>
+            {s.listOpen ? '隐藏字幕列表' : '字幕列表（点击跳转）'}
+          </button>
+          <button onMouseDown={noFocus} disabled={!s.cues} onClick={() => ctl.clearCues()}>
+            清除字幕
+          </button>
+          <button onMouseDown={noFocus} onClick={() => void ctl.openOptions()}>
+            生词本 / 备份 / 设置
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CueList({ s, ctl }: { s: OverlayState; ctl: OverlayController }) {
+  const activeIds = new Set(s.activeCues.map((c) => c.id));
+  const listRef = useRef<HTMLOListElement>(null);
+  const firstActive = s.activeCues[0]?.id;
+  useEffect(() => {
+    if (!firstActive) return;
+    const el = listRef.current?.querySelector('li.active');
+    el?.scrollIntoView({ block: 'nearest' });
+  }, [firstActive]);
+  return (
+    <div className="list">
+      <header>
+        <span>{s.fileName}</span>
+        <button className="pill on" onMouseDown={noFocus} onClick={() => ctl.toggleList()}>
+          关闭
+        </button>
+      </header>
+      <ol ref={listRef}>
+        {s.cues!.map((cue) => (
+          <li key={cue.id} className={activeIds.has(cue.id) ? 'active' : ''} onMouseDown={noFocus} onClick={() => ctl.seekTo(cue)}>
+            <span className="t">{formatTimestamp(cue.startMs)}</span>
+            {cue.text.replace(/\n/g, ' ')}
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+function WordCard({ card, ctl }: { card: CardState; ctl: OverlayController }) {
+  const r = card.result;
+  const [draft, setDraft] = useState('');
+  useEffect(() => {
+    if (card.editing) setDraft(r?.custom?.text ?? '');
+  }, [card.editing, r?.custom?.text]);
+
+  const status = r?.vocab?.status ?? null;
+  const entry = r?.lemmaEntry ?? null;
+  const hasAnyDefinition = !!(entry || r?.wordEntry || r?.custom);
+
+  return (
+    <div
+      className="card"
+      style={{ left: card.x, bottom: card.bottom }}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') ctl.closeCard();
+      }}
+    >
+      <div className="head">
+        <span className="word">{card.word}</span>
+        {r && r.lemma !== r.word && <span className="lemma">→ {r.lemma}</span>}
+        {entry?.phonetic && <span className="ph">/{entry.phonetic}/</span>}
+        <button className="x" onMouseDown={noFocus} onClick={() => ctl.closeCard()} title="关闭">
+          ×
+        </button>
+      </div>
+
+      {card.loading && <div className="meta">查询中…</div>}
+
+      {r && (
+        <>
+          {entry && entry.tags.length > 0 && (
+            <div className="tags">
+              {entry.tags.map((t) => (
+                <span className="tag" key={t}>
+                  {t}
+                </span>
+              ))}
+            </div>
+          )}
+          {entry && <div className="def">{entry.translation}</div>}
+          {r.wordEntry && (
+            <div className="def sub-def">
+              「{r.word}」本身：{r.wordEntry.translation}
+            </div>
+          )}
+          {!hasAnyDefinition && (
+            <div className="none">
+              暂无释义。{r.dictAvailable ? '本地词典中没有这个词，' : `${r.dictError ?? '词典未加载。'}`}你可以手动添加。
+            </div>
+          )}
+          {r.custom && !card.editing && (
+            <div className="custom">
+              <small>我的释义</small>
+              {r.custom.text}
+            </div>
+          )}
+          {card.editing ? (
+            <div>
+              <textarea
+                autoFocus
+                value={draft}
+                maxLength={2000}
+                placeholder={`为 ${r.lemma} 写一条释义（留空保存即删除）`}
+                onChange={(e) => setDraft(e.target.value)}
+              />
+              <div className="row">
+                <button className="btn" disabled={card.saving} onClick={() => void ctl.saveCustomDef(draft)}>
+                  保存
+                </button>
+                <button className="btn" onClick={() => ctl.setEditing(false)}>
+                  取消
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button className="link" onMouseDown={noFocus} onClick={() => ctl.setEditing(true)}>
+              {r.custom ? '编辑我的释义' : '添加我的释义'}
+            </button>
+          )}
+
+          <div className="row">
+            {VOCAB_STATUSES.map((st: VocabStatus) => (
+              <button
+                key={st}
+                className={`btn ${st}${status === st ? ' on' : ''}`}
+                disabled={card.saving}
+                onMouseDown={noFocus}
+                onClick={() => void ctl.setStatus(st)}
+              >
+                {STATUS_LABEL[st]}
+              </button>
+            ))}
+            {status && (
+              <button className="link" disabled={card.saving} onMouseDown={noFocus} onClick={() => void ctl.setStatus(null)}>
+                清除标记
+              </button>
+            )}
+          </div>
+          <div className="meta">
+            按词元「{r.lemma}」记录
+            {r.method === 'rule' ? '（规则推断）' : r.method === 'none' ? '（词典未收录，按原词）' : ''}
+          </div>
+        </>
+      )}
+      {card.error && <div className="err">{card.error}</div>}
+    </div>
+  );
+}

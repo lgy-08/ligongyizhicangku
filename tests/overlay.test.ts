@@ -1,0 +1,243 @@
+// @vitest-environment happy-dom
+import { IDBFactory } from 'fake-indexeddb';
+import { describe, expect, it, vi } from 'vitest';
+import { CueIndex, type CaptionCue } from '../src/captions';
+import { CueSync } from '../src/content/cue-sync';
+import { OverlayController, type CallFn } from '../src/content/overlay-controller';
+import { applyStatus, wordClass } from '../src/content/overlay-state';
+import { createStore } from '../src/content/store';
+import { createIdbStore } from '../src/storage/idb-store';
+import type { Annotation, LlRequest } from '../src/storage/protocol';
+import { handleRequest } from '../src/storage/router';
+import { DEFAULT_SETTINGS } from '../src/vocab/types';
+import { PlayerSession } from '../src/youtube/player-session';
+import { fixtureDict } from './helpers/dict-fixture';
+
+const cue = (id: string, startMs: number, endMs: number, text = id): CaptionCue => ({
+  id,
+  startMs,
+  endMs,
+  text,
+  source: 't',
+  timingConfidence: 'exact',
+});
+
+describe('createStore', () => {
+  it('merges patches and notifies subscribers', () => {
+    const s = createStore({ a: 1, b: 2 });
+    const l = vi.fn();
+    const off = s.subscribe(l);
+    s.set({ a: 5 });
+    s.set((p) => ({ b: p.a + 1 }));
+    expect(s.get()).toEqual({ a: 5, b: 6 });
+    expect(l).toHaveBeenCalledTimes(2);
+    off();
+    s.set({ a: 0 });
+    expect(l).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('CueSync', () => {
+  function rig() {
+    let t = 0;
+    const frames: (() => void)[] = [];
+    const onChange = vi.fn();
+    const sync = new CueSync({
+      getTimeMs: () => t,
+      onChange,
+      raf: (cb) => frames.push(cb),
+      caf: () => {
+        frames.length = 0;
+      },
+    });
+    const frame = () => frames.splice(0).forEach((f) => f());
+    return { sync, onChange, frame, setT: (v: number) => (t = v), frames };
+  }
+
+  it('emits only when the active set changes, frame by frame while playing', () => {
+    const r = rig();
+    r.sync.setIndex(new CueIndex([cue('a', 0, 1000), cue('b', 1000, 2000)]));
+    expect(r.onChange).toHaveBeenLastCalledWith([expect.objectContaining({ id: 'a' })]);
+    r.sync.play();
+    r.setT(500);
+    r.frame();
+    expect(r.onChange).toHaveBeenCalledTimes(1);
+    r.setT(1000);
+    r.frame();
+    expect(r.onChange).toHaveBeenLastCalledWith([expect.objectContaining({ id: 'b' })]);
+    r.setT(2500);
+    r.frame();
+    expect(r.onChange).toHaveBeenLastCalledWith([]);
+    expect(r.sync.running).toBe(true);
+  });
+
+  it('follows seeks while paused via update()', () => {
+    const r = rig();
+    r.sync.setIndex(new CueIndex([cue('a', 0, 1000), cue('b', 5000, 6000)]));
+    r.setT(5500);
+    r.sync.update();
+    expect(r.onChange).toHaveBeenLastCalledWith([expect.objectContaining({ id: 'b' })]);
+    r.setT(100);
+    r.sync.update();
+    expect(r.onChange).toHaveBeenLastCalledWith([expect.objectContaining({ id: 'a' })]);
+  });
+
+  it('stop() and dispose() end the loop; stop inside onChange is safe', () => {
+    let t = 0;
+    const frames: (() => void)[] = [];
+    const sync: CueSync = new CueSync({
+      getTimeMs: () => t,
+      onChange: (a) => {
+        if (a.length === 0 && sync.running) sync.stop();
+      },
+      raf: (cb) => frames.push(cb),
+      caf: () => {},
+    });
+    sync.setIndex(new CueIndex([cue('a', 0, 1000)]));
+    sync.play();
+    t = 2000;
+    frames.splice(0).forEach((f) => f());
+    expect(sync.running).toBe(false);
+    expect(frames).toHaveLength(0);
+    sync.dispose();
+  });
+});
+
+describe('wordClass / applyStatus', () => {
+  const a = (status: Annotation['status'], rank: number | null = 100): Annotation => ({ lemma: 'run', status, rank, inDict: true });
+  it('maps statuses and rare-word hint', () => {
+    expect(wordClass(undefined, DEFAULT_SETTINGS)).toBe('w');
+    expect(wordClass(a('unknown'), DEFAULT_SETTINGS)).toBe('w s-unknown');
+    expect(wordClass(a('learning'), DEFAULT_SETTINGS)).toBe('w s-learning');
+    expect(wordClass(a('known'), DEFAULT_SETTINGS)).toBe('w s-known');
+    expect(wordClass(a(null, 20_000), DEFAULT_SETTINGS)).toBe('w'); // hint off by default
+    expect(wordClass(a(null, 20_000), { ...DEFAULT_SETTINGS, highlightRare: true })).toBe('w rare');
+    expect(wordClass(a(null, 100), { ...DEFAULT_SETTINGS, highlightRare: true })).toBe('w');
+  });
+  it('updates all surface forms of a lemma and keeps identity when unchanged', () => {
+    const ann = { ran: a(null), running: a(null), go: { ...a(null), lemma: 'go' } };
+    const next = applyStatus(ann, 'run', 'known');
+    expect(next.ran!.status).toBe('known');
+    expect(next.running!.status).toBe('known');
+    expect(next.go!.status).toBeNull();
+    expect(applyStatus(next, 'run', 'known')).toBe(next);
+  });
+});
+
+/** OverlayController wired to the real router + fake-indexeddb + fixture dictionary. */
+function overlayRig(opts: { failLookup?: boolean } = {}) {
+  const store = createIdbStore(new IDBFactory());
+  const deps = { store, sw: { instanceId: 'x', startedAt: 0 }, appVersion: 't', getDict: async () => ({ dict: fixtureDict(), error: null }) };
+  const calls: LlRequest[] = [];
+  const call: CallFn = async (msg) => {
+    calls.push(msg);
+    if (opts.failLookup && msg.type === 'll/lookup') return { ok: false, error: 'boom' };
+    return (await handleRequest(msg, deps)) as never;
+  };
+  const ctl = new OverlayController(call);
+  const video = document.createElement('video');
+  const state = { t: 0, paused: true };
+  Object.defineProperty(video, 'currentTime', { get: () => state.t, set: (v: number) => (state.t = v), configurable: true });
+  Object.defineProperty(video, 'paused', { get: () => state.paused, configurable: true });
+  video.pause = () => {
+    state.paused = true;
+  };
+  video.play = async () => {
+    state.paused = false;
+  };
+  const session = new PlayerSession(video, () => {});
+  return { ctl, store, calls, session, video, state };
+}
+
+const SRT = '1\n00:00:01,000 --> 00:00:03,000\nThe mice ran away\n\n2\n00:00:04,000 --> 00:00:06,000\nWe went running\n';
+
+describe('OverlayController', () => {
+  it('import -> sync -> annotate; detach leaves no residue', async () => {
+    const r = overlayRig();
+    r.ctl.attachSession(r.session, 'AAAAAAAAAAA');
+    await r.ctl.importFile(new File([SRT], 'a.srt'));
+    const s = r.ctl.store.get();
+    expect(s.cues).toHaveLength(2);
+    expect(s.message).toMatchObject({ kind: 'info', text: expect.stringContaining('2 条字幕') });
+    expect(s.annotations.ran).toMatchObject({ lemma: 'run' });
+    expect(s.annotations.mice).toMatchObject({ lemma: 'mouse' });
+
+    r.state.t = 4.5;
+    r.ctl.onPlayerEvent('seeked');
+    expect(r.ctl.store.get().activeCues.map((c) => c.id)).toEqual(['srt-file#2']);
+
+    r.ctl.detachSession();
+    const after = r.ctl.store.get();
+    expect(after).toMatchObject({ cues: null, activeCues: [], annotations: {}, card: null, fileName: null });
+  });
+
+  it('reports parse errors without throwing', async () => {
+    const r = overlayRig();
+    r.ctl.attachSession(r.session, 'AAAAAAAAAAA');
+    await r.ctl.importFile(new File(['WEBVTT\n\n00:00:01.000 --> nope\nx'], 'bad.vtt'));
+    expect(r.ctl.store.get().message).toMatchObject({ kind: 'error', text: expect.stringContaining('line 3') });
+    expect(r.ctl.store.get().cues).toBeNull();
+  });
+
+  it('drops an import that finishes after the video changed', async () => {
+    const r = overlayRig();
+    r.ctl.attachSession(r.session, 'AAAAAAAAAAA');
+    const p = r.ctl.importFile(new File([SRT], 'a.srt'));
+    r.ctl.attachSession(r.session, 'BBBBBBBBBBB');
+    await p;
+    expect(r.ctl.store.get()).toMatchObject({ videoId: 'BBBBBBBBBBB', cues: null });
+  });
+
+  it('word card: lookup, mark status (updates all forms), custom definition', async () => {
+    const r = overlayRig();
+    r.ctl.attachSession(r.session, 'AAAAAAAAAAA');
+    await r.ctl.importFile(new File([SRT], 'a.srt'));
+    await r.ctl.openCard('ran', 10, 20);
+    expect(r.ctl.store.get().card).toMatchObject({ word: 'ran', loading: false, result: { lemma: 'run' } });
+
+    await r.ctl.setStatus('unknown');
+    const s = r.ctl.store.get();
+    expect(s.card!.result!.vocab).toMatchObject({ lemma: 'run', status: 'unknown' });
+    expect(s.annotations.ran!.status).toBe('unknown');
+    expect(s.annotations.running!.status).toBe('unknown');
+    expect((await r.store.listVocab()).map((v) => v.lemma)).toEqual(['run']);
+
+    await r.ctl.saveCustomDef('跑（过去式）');
+    expect(r.ctl.store.get().card!.result!.custom!.text).toBe('跑（过去式）');
+
+    await r.ctl.setStatus(null);
+    expect(r.ctl.store.get().annotations.ran!.status).toBeNull();
+    expect(await r.store.listVocab()).toEqual([]);
+  });
+
+  it('shows lookup errors in the card', async () => {
+    const r = overlayRig({ failLookup: true });
+    r.ctl.attachSession(r.session, 'AAAAAAAAAAA');
+    await r.ctl.openCard('ran', 0, 0);
+    expect(r.ctl.store.get().card).toMatchObject({ loading: false, error: 'boom', result: null });
+  });
+
+  it('no forced pause by default; pauseOnLookup pauses and resumes', async () => {
+    const r = overlayRig();
+    r.ctl.attachSession(r.session, 'AAAAAAAAAAA');
+    r.state.paused = false;
+    await r.ctl.openCard('ran', 0, 0);
+    expect(r.state.paused).toBe(false);
+    r.ctl.closeCard();
+
+    r.ctl.store.set({ settings: { ...DEFAULT_SETTINGS, pauseOnLookup: true } });
+    await r.ctl.openCard('ran', 0, 0);
+    expect(r.state.paused).toBe(true);
+    r.ctl.closeCard();
+    await Promise.resolve();
+    expect(r.state.paused).toBe(false);
+  });
+
+  it('checks the backup reminder at most once per page', async () => {
+    const r = overlayRig();
+    r.ctl.attachSession(r.session, 'AAAAAAAAAAA');
+    r.ctl.attachSession(r.session, 'BBBBBBBBBBB');
+    await new Promise((res) => setTimeout(res, 0));
+    expect(r.calls.filter((c) => c.type === 'll/reminder-check')).toHaveLength(1);
+  });
+});

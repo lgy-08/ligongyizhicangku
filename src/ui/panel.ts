@@ -1,14 +1,10 @@
-import { formatTimestamp } from '../captions/text';
-import type { CaptionCue } from '../captions/types';
 import { el } from './dom';
 
+/** LL-001 diagnostics panel. Hidden unless "显示诊断面板" is enabled in settings. */
 export interface PanelHandlers {
   onIncrement: () => void;
   onRead: () => void;
   onSwStatus: () => void;
-  onFile: (file: File) => void;
-  onClearCues: () => void;
-  onCueClick: (cue: CaptionCue) => void;
   onCopyDiagnostics: () => void;
 }
 
@@ -20,9 +16,6 @@ export interface Panel {
   setProbe(text: string): void;
   setDomCaption(text: string): void;
   setStorage(text: string): void;
-  setImportMessage(text: string, isError: boolean): void;
-  setCues(cues: readonly CaptionCue[]): void;
-  highlightCue(id: string | null): void;
   showText(text: string): void;
   destroy(): void;
 }
@@ -42,13 +35,6 @@ h4 { margin: 4px 0; font-size: 11px; text-transform: uppercase; color: #9ab; let
 pre { margin: 0; white-space: pre-wrap; word-break: break-word; font: 11px/1.35 ui-monospace, Consolas, monospace; color: #ddd; }
 button { font: inherit; color: #eee; background: #333; border: 1px solid #555; border-radius: 4px; padding: 2px 8px; cursor: pointer; margin: 2px 4px 2px 0; }
 button:hover { background: #444; }
-.err { color: #f88; }
-.ok { color: #8d8; }
-ol { margin: 0; padding: 0; list-style: none; max-height: 180px; overflow: auto; border: 1px solid #333; }
-li { padding: 2px 4px; cursor: pointer; border-bottom: 1px solid #2a2a2a; }
-li:hover { background: #2c2c2c; }
-li.active { background: #264; }
-li .t { color: #9ab; margin-right: 6px; font-family: ui-monospace, Consolas, monospace; }
 .log { max-height: 120px; overflow: auto; }
 textarea { width: 100%; height: 120px; font: 10px ui-monospace, Consolas, monospace; background: #111; color: #ddd; }
 `;
@@ -61,15 +47,13 @@ export function createPanel(h: PanelHandlers): Panel {
 
   const status = el('span', { text: 'idle' });
   const toggle = el('span', { text: '−' });
-  const head = el('div', { className: 'head' }, [el('b', { text: 'LinguaLens LL-001' }), status, toggle]);
+  const head = el('div', { className: 'head' }, [el('b', { text: 'LinguaLens diagnostics' }), status, toggle]);
 
   const player = el('pre', { text: '-' });
   const logPre = el('pre', { className: 'log' });
   const probe = el('pre', { text: '-' });
   const domCap = el('pre', { text: '-' });
   const storage = el('pre', { text: '-' });
-  const importMsg = el('pre');
-  const cueList = el('ol');
   const extra = el('div');
 
   const btn = (text: string, fn: () => void) => {
@@ -77,12 +61,6 @@ export function createPanel(h: PanelHandlers): Panel {
     b.addEventListener('click', fn);
     return b;
   };
-  const file = el('input', { type: 'file', accept: '.srt,.vtt,text/vtt' });
-  file.addEventListener('change', () => {
-    const f = file.files?.[0];
-    if (f) h.onFile(f);
-    file.value = '';
-  });
 
   const body = el('div', { className: 'body' }, [
     el('section', {}, [el('h4', { text: 'Player' }), player]),
@@ -96,13 +74,6 @@ export function createPanel(h: PanelHandlers): Panel {
       btn('SW status', h.onSwStatus),
       storage,
     ]),
-    el('section', {}, [
-      el('h4', { text: 'Import SRT / VTT (exact timing)' }),
-      file,
-      btn('Clear', h.onClearCues),
-      importMsg,
-      cueList,
-    ]),
     el('section', {}, [btn('Copy diagnostics JSON', h.onCopyDiagnostics), extra]),
   ]);
 
@@ -115,9 +86,6 @@ export function createPanel(h: PanelHandlers): Panel {
   (document.body ?? document.documentElement).append(host);
 
   const logLines: string[] = [];
-  const cueEls = new Map<string, HTMLLIElement>();
-  let activeId: string | null = null;
-
   return {
     setVisible(v) {
       host.style.display = v ? '' : 'none';
@@ -142,34 +110,6 @@ export function createPanel(h: PanelHandlers): Panel {
     },
     setStorage(t) {
       storage.textContent = t;
-    },
-    setImportMessage(t, isError) {
-      importMsg.textContent = t;
-      importMsg.className = isError ? 'err' : 'ok';
-    },
-    setCues(cues) {
-      cueList.replaceChildren();
-      cueEls.clear();
-      activeId = null;
-      for (const cue of cues) {
-        const li = el('li', { title: `${cue.timingConfidence} · ${cue.source}` }, [
-          el('span', { className: 't', text: formatTimestamp(cue.startMs) }),
-          cue.text.replace(/\n/g, ' / '),
-        ]);
-        li.addEventListener('click', () => h.onCueClick(cue));
-        cueEls.set(cue.id, li);
-        cueList.append(li);
-      }
-    },
-    highlightCue(id) {
-      if (id === activeId) return;
-      if (activeId) cueEls.get(activeId)?.classList.remove('active');
-      activeId = id;
-      const li = id ? cueEls.get(id) : undefined;
-      if (li) {
-        li.classList.add('active');
-        li.scrollIntoView({ block: 'nearest' });
-      }
     },
     showText(t) {
       const ta = el('textarea');
