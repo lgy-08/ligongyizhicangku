@@ -1,0 +1,16 @@
+WEBVTT - LL-001 sample
+
+NOTE Timings are generic; use with any test video longer than 1 minute.
+
+a
+00:00:02.000 --> 00:00:05.000 align:center
+[LL-001 VTT] Line 1 at 0:02
+
+00:06.000 --> 00:09.500
+[LL-001 VTT] Line 2 at 0:06 (short timestamp form)
+
+00:00:30.000 --> 00:00:34.000
+<v Narrator>[LL-001 VTT] Line 3 at 0:30</v>
+
+00:01:00.000 --> 00:01:04.000
+[LL-001 VTT] Line 4 at 1:00

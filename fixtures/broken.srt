@@ -1,0 +1,7 @@
+1
+00:00:01,000 --> 00:00:03,000
+Valid first cue
+
+2
+00:00:0x,000 --> 00:00:05,000
+This block has a malformed timestamp and should produce a clear error.

@@ -1,0 +1,21 @@
+{
+  "name": "lingualens",
+  "description": "LinguaLens - immersive English learning Chrome extension (LL-001 feasibility prototype)",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "wxt",
+    "build": "wxt build",
+    "zip": "wxt zip",
+    "compile": "tsc --noEmit",
+    "test": "vitest run",
+    "postinstall": "wxt prepare"
+  },
+  "devDependencies": {
+    "happy-dom": "20.14.5",
+    "typescript": "5.9.3",
+    "vitest": "5.0.3",
+    "wxt": "0.21.4"
+  }
+}

@@ -1,0 +1,16 @@
+1
+00:00:02,000 --> 00:00:05,000
+[LL-001 SRT] Line 1 should appear at 0:02
+
+2
+00:00:06,000 --> 00:00:09,500
+[LL-001 SRT] Line 2 at 0:06
+This cue has two lines.
+
+3
+00:00:30,000 --> 00:00:34,000
+[LL-001 SRT] Line 3 at 0:30 (click it to jump)
+
+4
+00:01:00,000 --> 00:01:04,000
+<i>[LL-001 SRT] Line 4 at 1:00 &amp; italic tags stripped</i>
