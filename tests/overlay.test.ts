@@ -135,7 +135,7 @@ function overlayRig(opts: { failLookup?: boolean } = {}) {
     if (opts.failLookup && msg.type === 'll/lookup') return { ok: false, error: 'boom' };
     return (await handleRequest(msg, deps)) as never;
   };
-  const ctl = new OverlayController(call);
+  const ctl = new OverlayController(call, { settleMs: SETTLE_MS });
   const video = document.createElement('video');
   const state = { t: 0, paused: true };
   Object.defineProperty(video, 'currentTime', { get: () => state.t, set: (v: number) => (state.t = v), configurable: true });
@@ -149,6 +149,11 @@ function overlayRig(opts: { failLookup?: boolean } = {}) {
   const session = new PlayerSession(video, () => {});
   return { ctl, store, calls, session, video, state };
 }
+
+// Real value is 700 ms. Tests use a shorter one, but long enough that the simulated
+// "stale caption" steps reliably happen inside the settle period even on a busy machine.
+const SETTLE_MS = 150;
+const settle = () => new Promise((r) => setTimeout(r, SETTLE_MS * 2));
 
 const SRT = '1\n00:00:01,000 --> 00:00:03,000\nThe mice ran away\n\n2\n00:00:04,000 --> 00:00:06,000\nWe went running\n';
 
@@ -321,8 +326,10 @@ describe('OverlayController', () => {
     await show(1.75, ['two']);
     seek(60);
     await show(60, ['sixty']);
+    await settle();
     seek(1);
     await show(1, ['one']); // watched again: no duplicate
+    await settle();
     expect(list()).toEqual(['one', 'two', '--gap--', 'sixty']);
 
     // Next video while the old caption is still on screen: it must not be recorded for the new video.
@@ -332,6 +339,67 @@ describe('OverlayController', () => {
     expect(r.ctl.store.get().transcript).toEqual([]);
     await show(3, ['new video line']);
     expect(list()).toEqual(['new video line']);
+    player.remove();
+  });
+
+  it('seeking back: the caption from before the seek, re-rendered at the new position, is not recorded there', async () => {
+    const r = overlayRig();
+    const player = document.createElement('div');
+    document.body.append(player);
+    r.ctl.attachSession(r.session, 'AAAAAAAAAAA', player);
+    const at = async (sec: number, lines: string[] | null) => {
+      r.state.t = sec;
+      r.ctl.onPlayerEvent('timeupdate');
+      renderCaption(player, lines);
+      await flush();
+    };
+    const seek = (sec: number) => {
+      r.ctl.onPlayerEvent('seeking');
+      r.state.t = sec;
+      r.ctl.onPlayerEvent('seeked');
+    };
+    const lines = () => r.ctl.store.get().transcript.flatMap((i) => (i.kind === 'line' ? [`${i.line.timeMs / 1000}:${i.line.text}`] : []));
+
+    await at(10, ['early sentence']);
+    await at(12, ['middle sentence']);
+    seek(60);
+    await at(60, null);
+    await at(60, ['late sentence']);
+    await settle();
+    expect(lines()).toEqual(['10:early sentence', '12:middle sentence', '60:late sentence']);
+
+    // Seek back to 11 s. YouTube first re-renders the OLD caption ("late sentence") at 11 s, then the right one.
+    seek(11);
+    await at(11, null);
+    await at(11, ['late sentence']);
+    await at(11, ['early sentence']);
+    await settle();
+    await at(12, ['middle sentence']);
+    expect(lines()).toEqual(['10:early sentence', '12:middle sentence', '60:late sentence']);
+    expect(r.ctl.debugLog.some((l) => l.includes('skip (settling after seek)'))).toBe(true);
+    player.remove();
+  });
+
+  it('a caption first seen after a seek is recorded at the seek target, in order', async () => {
+    const r = overlayRig();
+    const player = document.createElement('div');
+    document.body.append(player);
+    r.ctl.attachSession(r.session, 'AAAAAAAAAAA', player);
+    r.state.t = 5;
+    renderCaption(player, ['five']);
+    await flush();
+    r.ctl.onPlayerEvent('seeking');
+    r.state.t = 30;
+    r.ctl.onPlayerEvent('seeked');
+    renderCaption(player, ['thirty']);
+    await flush();
+    r.state.t = 30.6; // playback continued during the settle period
+    await settle();
+    const t = r.ctl.store.get().transcript.flatMap((i) => (i.kind === 'line' ? [[i.line.text, i.line.timeMs]] : []));
+    expect(t).toEqual([
+      ['five', 5000],
+      ['thirty', 30000],
+    ]);
     player.remove();
   });
 

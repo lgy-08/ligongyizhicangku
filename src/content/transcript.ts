@@ -15,9 +15,29 @@ export interface TranscriptLine {
 
 export type TranscriptItem = { kind: 'line'; line: TranscriptLine } | { kind: 'gap'; key: string };
 
-/** Same text seen again within this window is the same line (replay after seeking back, ASR scroll). */
-export const DEDUPE_WINDOW_MS = 8000;
+export type AddResult =
+  | 'added' // new line inserted
+  | 'grew' // an existing nearby line was extended (auto-captions grow word by word)
+  | 'duplicate' // same text (ignoring case/punctuation) already nearby, or a shorter prefix of it
+  | 'contained' // text already present inside the neighbouring lines (auto-captions re-wrapped differently)
+  | 'invalid'
+  | 'full';
+
+/** Lines whose recorded times are within this window are compared for duplicates. */
+export const DEDUPE_WINDOW_MS = 10_000;
 export const MAX_LINES = 5000;
+
+/** Comparison key: lowercase, punctuation removed (apostrophes kept), single spaces. */
+export function lineKey(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[‘’]/g, "'")
+    .replace(/[^\p{L}\p{N}'\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+const startsWithWords = (whole: string, prefix: string) => whole === prefix || whole.startsWith(`${prefix} `);
 
 export class LiveTranscript {
   private readonly lines: TranscriptLine[] = [];
@@ -31,29 +51,33 @@ export class LiveTranscript {
     return this.lines;
   }
 
-  /**
-   * Records one visible caption line seen at media time t. Returns true if the list changed.
-   * - identical text nearby in time: ignored (replay)
-   * - longer version of a nearby line (auto-generated captions grow word by word): line updated
-   * - shorter prefix of a nearby line (partially seen again): ignored
-   */
-  add(rawText: string, timeMs: number): boolean {
+  /** Records one visible caption line seen at media time t. */
+  add(rawText: string, timeMs: number): AddResult {
     const text = rawText.replace(/\s+/g, ' ').trim();
-    if (!text || !Number.isFinite(timeMs)) return false;
+    const key = lineKey(text);
+    if (!key || !Number.isFinite(timeMs)) return 'invalid';
+
     const lo = this.lowerBound(timeMs - DEDUPE_WINDOW_MS);
-    for (let i = lo; i < this.lines.length && this.lines[i]!.timeMs <= timeMs + DEDUPE_WINDOW_MS; i++) {
-      const l = this.lines[i]!;
-      if (l.text === text) return false;
-      if (text.startsWith(l.text)) {
-        l.text = text; // grew: keep the original first-seen time
-        return true;
-      }
-      if (l.text.startsWith(text)) return false;
+    const hi = this.lowerBound(timeMs + DEDUPE_WINDOW_MS + 1);
+    const neighbours = this.lines.slice(lo, hi);
+    const keys = neighbours.map((l) => lineKey(l.text));
+
+    for (let i = 0; i < neighbours.length; i++) {
+      const k = keys[i]!;
+      if (k === key || startsWithWords(k, key)) return 'duplicate';
     }
-    if (this.lines.length >= MAX_LINES) return false;
+    for (let i = 0; i < neighbours.length; i++) {
+      if (startsWithWords(key, keys[i]!)) {
+        neighbours[i]!.text = text; // grew: keep the original first-seen time
+        return 'grew';
+      }
+    }
+    if (` ${keys.join(' ')} `.includes(` ${key} `)) return 'contained';
+
+    if (this.lines.length >= MAX_LINES) return 'full';
     const line: TranscriptLine = { id: ++this.seq, text, timeMs };
     this.lines.splice(this.lowerBound(timeMs + 0.5), 0, line); // after lines with the same time
-    return true;
+    return 'added';
   }
 
   clear(): void {

@@ -17,12 +17,39 @@ describe('LiveTranscript', () => {
 
   it('does not duplicate lines when a stretch is watched again', () => {
     const t = new LiveTranscript();
-    expect(t.add('hello there', 5_000)).toBe(true);
-    expect(t.add('general kenobi', 7_000)).toBe(true);
+    expect(t.add('hello there', 5_000)).toBe('added');
+    expect(t.add('general kenobi', 7_000)).toBe('added');
     // seek back, the same captions appear again at (almost) the same video time
-    expect(t.add('hello there', 5_040)).toBe(false);
-    expect(t.add('general kenobi', 6_980)).toBe(false);
+    expect(t.add('hello there', 5_040)).toBe('duplicate');
+    expect(t.add('general kenobi', 6_980)).toBe('duplicate');
+    // seek back into the MIDDLE of a caption: first seen later than originally, still the same line
+    expect(t.add('general kenobi', 9_500)).toBe('duplicate');
     expect(t.size).toBe(2);
+  });
+
+  it('treats case and punctuation differences as the same line', () => {
+    const t = new LiveTranscript();
+    t.add("It's fine.", 1_000);
+    expect(t.add('it’s fine', 1_200)).toBe('duplicate');
+    expect(t.add('IT’S FINE!', 1_300)).toBe('duplicate');
+    expect(t.size).toBe(1);
+  });
+
+  it('ignores auto-caption text re-wrapped differently on replay (already contained)', () => {
+    const t = new LiveTranscript();
+    t.add('so we were running', 20_000);
+    t.add('late and then the bus', 22_000);
+    // replay: YouTube wraps the same words differently
+    expect(t.add('running late and then', 21_000)).toBe('contained');
+    expect(t.add('were running late', 20_500)).toBe('contained');
+    expect(texts(t)).toEqual(['so we were running', 'late and then the bus']);
+  });
+
+  it('matches prefixes on whole words only', () => {
+    const t = new LiveTranscript();
+    t.add('the', 1_000);
+    expect(t.add('then we left', 1_500)).toBe('added');
+    expect(texts(t)).toEqual(['the', 'then we left']);
   });
 
   it('keeps a sentence that legitimately repeats far apart', () => {
@@ -48,9 +75,10 @@ describe('LiveTranscript', () => {
 
   it('normalizes whitespace and ignores empty / invalid input', () => {
     const t = new LiveTranscript();
-    expect(t.add('  a   b ', 1)).toBe(true);
-    expect(t.add('   ', 2)).toBe(false);
-    expect(t.add('x', Number.NaN)).toBe(false);
+    expect(t.add('  a   b ', 1)).toBe('added');
+    expect(t.add('   ', 2)).toBe('invalid');
+    expect(t.add('...', 3)).toBe('invalid');
+    expect(t.add('x', Number.NaN)).toBe('invalid');
     expect(texts(t)).toEqual(['a b']);
     t.clear();
     expect(t.size).toBe(0);

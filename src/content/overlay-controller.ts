@@ -27,7 +27,14 @@ export class OverlayController {
   /** Incremented on every session change; async results from an older session are dropped. */
   private epoch = 0;
 
-  constructor(private readonly call: CallFn) {}
+  private readonly settleMs: number;
+
+  constructor(
+    private readonly call: CallFn,
+    options: { settleMs?: number } = {},
+  ) {
+    this.settleMs = options.settleMs ?? OverlayController.DEFAULT_SETTLE_MS;
+  }
 
   get settings(): Settings {
     return this.store.get().settings;
@@ -82,6 +89,9 @@ export class OverlayController {
     this.live = null;
     this.playerEl = null;
     this.staleText = undefined;
+    if (this.settle?.timer) clearTimeout(this.settle.timer);
+    this.settle = null;
+    this.debugLog.length = 0;
     this.transcript.clear(); // session only: nothing carries over to the next video
     this.coverage.clear();
     this.pendingWords.clear();
@@ -109,14 +119,61 @@ export class OverlayController {
     return this.session?.snapshot().currentTimeMs ?? Number.NaN;
   }
 
+  /**
+   * After a seek, YouTube may briefly re-render the caption from BEFORE the seek. Recording it at the
+   * new time would duplicate it and break the order, so recording pauses from "seeking" until
+   * SETTLE_MS after "seeked"; then the caption visible at that point is recorded at the seek target.
+   */
+  static readonly DEFAULT_SETTLE_MS = 700;
+  private settle: { target: number | null; timer: ReturnType<typeof setTimeout> | null } | null = null;
+
+  /** Recent transcript decisions, for the diagnostics JSON. */
+  readonly debugLog: string[] = [];
+
+  private log(event: string, t: number = this.nowMs()): void {
+    this.debugLog.push(`${Number.isFinite(t) ? (t / 1000).toFixed(2) : '?'}s ${event}`);
+    if (this.debugLog.length > 300) this.debugLog.splice(0, this.debugLog.length - 300);
+  }
+
+  private startSettle(): void {
+    if (this.settle?.timer) clearTimeout(this.settle.timer);
+    this.settle = { target: null, timer: null };
+  }
+
+  private seekDone(): void {
+    if (!this.settle) this.startSettle();
+    const s = this.settle!;
+    s.target = this.nowMs();
+    if (s.timer) clearTimeout(s.timer);
+    s.timer = setTimeout(() => this.endSettle(), this.settleMs);
+  }
+
+  private endSettle(): void {
+    const s = this.settle;
+    this.settle = null;
+    if (!s) return;
+    if (s.timer) clearTimeout(s.timer);
+    const text = this.live?.text;
+    this.log(`settled${text ? '' : ' (no caption)'}`, s.target ?? Number.NaN);
+    if (text && s.target !== null && this.staleText === undefined) this.recordLive(text, s.target);
+  }
+
   /** Adds every visible caption line to the session transcript, ordered by video time. */
-  private recordLive(text: string): void {
+  private recordLive(text: string, at?: number): void {
     if (this.isAdShowing()) return;
-    const t = this.nowMs();
+    if (this.settle) {
+      this.log(`skip (settling after seek): "${text.replace(/\n/g, ' / ').slice(0, 60)}"`);
+      return;
+    }
+    const t = at ?? this.nowMs();
     if (!Number.isFinite(t)) return;
     this.coverage.note(t);
     let changed = false;
-    for (const line of text.split('\n')) changed = this.transcript.add(line, t) || changed;
+    for (const line of text.split('\n')) {
+      const r = this.transcript.add(line, t);
+      if (line.trim()) this.log(`${r}: "${line.slice(0, 60)}"`, t);
+      if (r === 'added' || r === 'grew') changed = true;
+    }
     if (changed) this.publishTranscript();
   }
 
@@ -154,9 +211,17 @@ export class OverlayController {
   onPlayerEvent(type: PlayerEventType): void {
     const sync = this.sync;
     if (!sync) return;
-    if (type === 'seeking') this.coverage.break();
-    else if (type === 'timeupdate' && !this.session?.video.seeking && !this.isAdShowing()) this.coverage.note(this.nowMs());
-    else if (type === 'seeked' && this.transcript.size > 0) this.publishTranscript();
+    if (type === 'seeking') {
+      this.coverage.break();
+      this.startSettle();
+      this.log('seeking');
+    } else if (type === 'seeked') {
+      this.log('seeked');
+      this.seekDone();
+      if (this.transcript.size > 0) this.publishTranscript();
+    } else if (type === 'timeupdate' && !this.settle && !this.session?.video.seeking && !this.isAdShowing()) {
+      this.coverage.note(this.nowMs());
+    }
     switch (type) {
       case 'play':
       case 'playing':

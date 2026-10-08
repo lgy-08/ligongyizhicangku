@@ -114,7 +114,15 @@ export default defineContentScript({
       onCopyDiagnostics: () => {
         diag.controllerStats = { ...controller.stats, liveSessions: controller.liveSessionCount };
         const o = overlay.store.get();
-        diag.overlay = { fileName: o.fileName, cues: o.cues?.length ?? 0, activeCues: o.activeCues.map((c) => c.id), annotated: Object.keys(o.annotations).length };
+        diag.overlay = {
+          fileName: o.fileName,
+          cues: o.cues?.length ?? 0,
+          activeCues: o.activeCues.map((c) => c.id),
+          annotated: Object.keys(o.annotations).length,
+          // "Already seen" list with the internal sort times, plus the recording decisions.
+          transcript: o.transcript.map((i) => (i.kind === 'gap' ? '-- gap --' : `${(i.line.timeMs / 1000).toFixed(2)}s ${i.line.text}`)),
+          transcriptLog: overlay.debugLog.slice(-200),
+        };
         const json = JSON.stringify(diag, null, 2);
         navigator.clipboard.writeText(json).then(
           () => pushEvent('diagnostics copied to clipboard'),
