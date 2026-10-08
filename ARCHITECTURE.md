@@ -27,7 +27,8 @@
 |---|---|
 | IndexedDB 只在 background | 只有 `entrypoints/background.ts` 创建 `createIdbStore()`；content 和 options 都只发消息 |
 | SPA 导航 | `WatchController` 同时听 WXT 的 `wxt:locationchange` 和 YouTube 的 `yt-navigate-finish`；每个视频一个会话，切换时整体销毁 |
-| SRT/VTT 是主路径 | 叠加层只显示用户导入的字幕（`timingConfidence: exact`）；YouTube 字幕 DOM 只在诊断面板中读取 |
+| SRT/VTT 是主路径 | 导入的字幕（`timingConfidence: exact`）始终优先，并且只有它支持字幕列表和按句跳转 |
+| YouTube 字幕只做尽力而为 | 未导入文件时，`LiveCaptions` 读取播放器当前渲染的 CC 文字，只提供“当前这一句”的点词查义，不产生时间轴；界面标注“尽力而为”，不调用下载接口 |
 | 不编造释义 | 词典没有的词显示“暂无释义”，并允许用户添加“我的释义” |
 | 隐私 | `permissions: []`，无 host_permissions；没有任何网络请求，除了加载扩展自带的词典文件 |
 
@@ -80,7 +81,8 @@ IndexedDB 数据库 `lingualens`，版本 2。升级只新增仓库，从不删�
 2. **同步**：播放时 `CueSync` 每帧查询 `CueIndex`，只在当前字幕集合变化时更新界面；暂停、跳转时单次更新。
 3. **查词**：点击单词 → `ll/lookup` → background 词形还原、查词典、查生词表和自定义释义 → 词卡。
 4. **标记**：`ll/vocab-set` → 返回新记录 → 本地把同一词元的所有词形一起更新高亮。
-5. **备份提醒**：每次页面加载最多检查一次 `ll/reminder-check`；满足条件时 background 先记下提醒时间，再返回 `remind: true`，保证每个周期只提醒一次。
+5. **YouTube 字幕模式**：`captionMode()` 在“有导入文件 → file；否则开关开启 → youtube；否则 none”中选择。youtube 模式下 `LiveCaptions` 监听 `#movie_player` 子树变化，读取 `.caption-visual-line` / `.ytp-caption-segment` 文字和 CC 按钮状态，只对新出现的单词发 `ll/annotate`。同时把 `.ytp-caption-window-container` 用内联样式设为透明，离开该模式时恢复原值。
+6. **备份提醒**：每次页面加载最多检查一次 `ll/reminder-check`；满足条件时 background 先记下提醒时间，再返回 `remind: true`，保证每个周期只提醒一次。
 
 ## 5. 与 YouTube 的交互约定
 

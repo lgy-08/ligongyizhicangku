@@ -19,6 +19,7 @@
   background: rgba(8, 8, 8, .74); color: #fff; padding: 6px 14px; border-radius: 6px;
   font-size: clamp(16px, 2.1vw, 30px); line-height: 1.45; white-space: pre-line;
 }
+.sub-box .src { font-size: 10px; line-height: 1.2; color: #9cc3ff; opacity: .7; text-align: left; margin-bottom: 2px; cursor: help; }
 .w { cursor: pointer; border-radius: 3px; padding: 0 1px; }
 .w:hover { background: rgba(255, 255, 255, .2); }
 .w.s-unknown { color: #ffb3a6; text-decoration: underline 2px #ff6e57; text-underline-offset: 4px; }

@@ -3,7 +3,7 @@ import { formatTimestamp } from '../../captions/text';
 import { tokenize } from '../../dict/tokenize';
 import { STATUS_LABEL, VOCAB_STATUSES, type VocabStatus } from '../../vocab/types';
 import type { OverlayController } from '../overlay-controller';
-import { wordClass, type CardState, type OverlayState } from '../overlay-state';
+import { captionMode, wordClass, type CardState, type OverlayState } from '../overlay-state';
 
 const CARD_WIDTH = 330;
 /** Prevents buttons from taking focus, so Space / K / F keep controlling the YouTube player. */
@@ -23,17 +23,29 @@ export function App({ ctl }: { ctl: OverlayController }) {
     void ctl.openCard(word, x, r.bottom - w.top + 8);
   };
 
+  const mode = captionMode(s);
+  const lines =
+    mode === 'file'
+      ? s.activeCues.map((c) => ({ key: c.id, text: c.text }))
+      : mode === 'youtube' && s.liveText
+        ? s.liveText.split('\n').map((text, i) => ({ key: `live-${i}`, text }))
+        : [];
+
   return (
     <div className="root" ref={rootRef}>
       <Toolbar s={s} ctl={ctl} />
       {s.listOpen && s.cues && <CueList s={s} ctl={ctl} />}
-      {s.activeCues.length > 0 && (
+      {lines.length > 0 && (
         <div className="sub">
-          <div className="sub-box">
-            {s.activeCues.map((cue, ci) => (
-              <div key={cue.id}>
-                {ci > 0 && <br />}
-                {tokenize(cue.text).map((t, i) =>
+          <div className={`sub-box${mode === 'youtube' ? ' live' : ''}`}>
+            {mode === 'youtube' && (
+              <div className="src" title="读取 YouTube 正在显示的 CC 文字：只有当前这一句，没有完整时间轴，不支持按句精确回放">
+                YouTube 字幕 · 尽力而为
+              </div>
+            )}
+            {lines.map((line) => (
+              <div key={line.key}>
+                {tokenize(line.text).map((t, i) =>
                   t.isWord ? (
                     <span
                       key={i}
@@ -83,6 +95,14 @@ export function App({ ctl }: { ctl: OverlayController }) {
   );
 }
 
+function menuHint(s: OverlayState): string {
+  if (s.cues) return `当前字幕：导入的 ${s.fileName}（${s.cues.length} 条，时间准确）。`;
+  if (!s.settings.youtubeCaptions) return '此视频尚未导入字幕。可以导入 SRT/VTT 文件，或开启“使用 YouTube 字幕”。';
+  if (s.ccOn === false) return '请点击播放器右下角的 CC 按钮打开 YouTube 字幕，字幕中的单词就可以点击查词。';
+  if (s.liveText) return '正在使用 YouTube 字幕（尽力而为）：只读取当前显示的文字，没有完整时间轴。';
+  return '正在等待 YouTube 字幕。如果这个视频没有字幕，可以导入 SRT/VTT 文件。';
+}
+
 function Toolbar({ s, ctl }: { s: OverlayState; ctl: OverlayController }) {
   const fileRef = useRef<HTMLInputElement>(null);
   return (
@@ -103,11 +123,12 @@ function Toolbar({ s, ctl }: { s: OverlayState; ctl: OverlayController }) {
       />
       {s.menuOpen && (
         <div className="menu">
-          <div className="hint">
-            {s.cues ? `当前字幕：${s.fileName}（${s.cues.length} 条）` : '此视频尚未导入字幕。请导入与该视频对应的 SRT 或 VTT 文件。'}
-          </div>
+          <div className="hint">{menuHint(s)}</div>
           <button onMouseDown={noFocus} onClick={() => fileRef.current?.click()}>
             导入字幕文件…
+          </button>
+          <button onMouseDown={noFocus} onClick={() => void ctl.setYoutubeCaptions(!s.settings.youtubeCaptions)}>
+            {s.settings.youtubeCaptions ? '✓ ' : ''}使用 YouTube 字幕（尽力而为）
           </button>
           <button onMouseDown={noFocus} disabled={!s.cues} onClick={() => ctl.toggleList()}>
             {s.listOpen ? '隐藏字幕列表' : '字幕列表（点击跳转）'}

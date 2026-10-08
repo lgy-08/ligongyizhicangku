@@ -4,7 +4,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { CueIndex, type CaptionCue } from '../src/captions';
 import { CueSync } from '../src/content/cue-sync';
 import { OverlayController, type CallFn } from '../src/content/overlay-controller';
-import { applyStatus, wordClass } from '../src/content/overlay-state';
+import { applyStatus, captionMode, wordClass } from '../src/content/overlay-state';
+import { flush, renderCaption } from './helpers/yt-dom';
 import { createStore } from '../src/content/store';
 import { createIdbStore } from '../src/storage/idb-store';
 import type { Annotation, LlRequest } from '../src/storage/protocol';
@@ -231,6 +232,69 @@ describe('OverlayController', () => {
     r.ctl.closeCard();
     await Promise.resolve();
     expect(r.state.paused).toBe(false);
+  });
+
+  it('YouTube captions ("best effort"): live text, annotation of new words only, native box hidden', async () => {
+    const r = overlayRig();
+    const player = document.createElement('div');
+    document.body.append(player);
+    const box = renderCaption(player, ['The mice ran'])!;
+    r.ctl.attachSession(r.session, 'AAAAAAAAAAA', player);
+    let s = r.ctl.store.get();
+    expect(captionMode(s)).toBe('youtube');
+    expect(s.liveText).toBe('The mice ran');
+    expect(box.style.opacity).toBe('0');
+    await vi.waitFor(() => expect(r.ctl.store.get().annotations.ran).toMatchObject({ lemma: 'run' }));
+
+    renderCaption(player, ['The mice ran away']);
+    await vi.waitFor(() => expect(r.ctl.store.get().annotations.away).toBeDefined());
+    const annotateCalls = r.calls.filter((c) => c.type === 'll/annotate') as { words: string[] }[];
+    expect(annotateCalls.map((c) => c.words)).toEqual([['The', 'mice', 'ran'], ['away']]);
+
+    await r.ctl.openCard('ran', 0, 0);
+    await r.ctl.setStatus('learning');
+    s = r.ctl.store.get();
+    expect(s.annotations.ran!.status).toBe('learning');
+    player.remove();
+  });
+
+  it('file import takes over from YouTube captions and gives the native box back; clearing switches back', async () => {
+    const r = overlayRig();
+    const player = document.createElement('div');
+    document.body.append(player);
+    renderCaption(player, ['live words']);
+    r.ctl.attachSession(r.session, 'AAAAAAAAAAA', player);
+    await flush();
+    await r.ctl.importFile(new File([SRT], 'a.srt'));
+    expect(captionMode(r.ctl.store.get())).toBe('file');
+    expect(player.querySelector<HTMLElement>('.ytp-caption-window-container')!.style.opacity).toBe('');
+
+    r.ctl.clearCues();
+    expect(captionMode(r.ctl.store.get())).toBe('youtube');
+    expect(player.querySelector<HTMLElement>('.ytp-caption-window-container')!.style.opacity).toBe('0');
+    await vi.waitFor(() => expect(r.ctl.store.get().annotations.live).toBeDefined());
+    player.remove();
+  });
+
+  it('turning YouTube captions off restores the native box and is saved; detach restores it too', async () => {
+    const r = overlayRig();
+    const player = document.createElement('div');
+    document.body.append(player);
+    const box = renderCaption(player, ['hello'])!;
+    r.ctl.attachSession(r.session, 'AAAAAAAAAAA', player);
+    expect(box.style.opacity).toBe('0');
+
+    await r.ctl.setYoutubeCaptions(false);
+    expect(captionMode(r.ctl.store.get())).toBe('none');
+    expect(box.style.opacity).toBe('');
+    expect((await r.store.get('settings'))!.value).toMatchObject({ youtubeCaptions: false });
+
+    await r.ctl.setYoutubeCaptions(true);
+    expect(box.style.opacity).toBe('0');
+    r.ctl.detachSession();
+    expect(box.style.opacity).toBe('');
+    expect(r.ctl.store.get().liveText).toBeNull();
+    player.remove();
   });
 
   it('checks the backup reminder at most once per page', async () => {

@@ -170,7 +170,7 @@ export default defineContentScript({
     // ---------- per-video session ----------
     const startSession = (session: PlayerSession, videoId: string) => {
       const playerEl = document.getElementById('movie_player');
-      overlay.attachSession(session, videoId);
+      overlay.attachSession(session, videoId, playerEl ?? undefined);
       const unmount = playerEl ? mountOverlay(playerEl, overlay) : null;
       if (!playerEl) pushEvent('#movie_player not found; overlay not mounted');
       const stopDiag = diagnosticsOn && playerEl ? startDiagnostics(session, videoId, playerEl) : null;

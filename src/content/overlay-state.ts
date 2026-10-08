@@ -27,6 +27,18 @@ export interface OverlayState {
   listOpen: boolean;
   message: { text: string; kind: 'info' | 'error' } | null;
   reminder: ReminderResult | null;
+  /** Text YouTube is currently rendering as CC ("best effort" source), null if none. */
+  liveText: string | null;
+  /** YouTube CC button state; null when unknown. */
+  ccOn: boolean | null;
+}
+
+export type CaptionMode = 'file' | 'youtube' | 'none';
+
+/** File import wins; otherwise YouTube's on-screen captions if enabled. */
+export function captionMode(s: Pick<OverlayState, 'cues' | 'settings'>): CaptionMode {
+  if (s.cues) return 'file';
+  return s.settings.youtubeCaptions ? 'youtube' : 'none';
 }
 
 export const initialOverlayState = (): OverlayState => ({
@@ -41,6 +53,8 @@ export const initialOverlayState = (): OverlayState => ({
   listOpen: false,
   message: null,
   reminder: null,
+  liveText: null,
+  ccOn: null,
 });
 
 /** CSS class for a word given its annotation and the settings. Pure, unit-tested. */

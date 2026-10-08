@@ -4,7 +4,8 @@ import type { Annotation, LlRequest, LlResponse, LookupResult, ReminderResult } 
 import type { CustomDefinition, Settings, VocabRecord, VocabStatus } from '../vocab/types';
 import type { PlayerEventType, PlayerSession } from '../youtube/player-session';
 import { CueSync } from './cue-sync';
-import { applyStatus, initialOverlayState, type OverlayState } from './overlay-state';
+import { LiveCaptions } from './live-captions';
+import { applyStatus, captionMode, initialOverlayState, type OverlayState } from './overlay-state';
 import { createStore, type Store } from './store';
 
 export type CallFn = <T>(msg: LlRequest) => Promise<LlResponse<T>>;
@@ -33,9 +34,13 @@ export class OverlayController {
   async loadSettings(): Promise<void> {
     const res = await this.call<Settings>({ type: 'll/settings-get' });
     if (res.ok) this.store.set({ settings: res.data });
+    this.applyNativeHidden();
   }
 
-  attachSession(session: PlayerSession, videoId: string): void {
+  /**
+   * @param playerEl YouTube's #movie_player; enables the "best effort" YouTube-caption source.
+   */
+  attachSession(session: PlayerSession, videoId: string, playerEl?: Element): void {
     this.detachSession();
     this.epoch++;
     this.session = session;
@@ -45,6 +50,17 @@ export class OverlayController {
     });
     this.store.set({ ...initialOverlayState(), settings: this.settings, videoId });
     if (!session.video.paused) this.sync.play();
+    if (playerEl) {
+      this.live = new LiveCaptions({
+        root: playerEl,
+        onChange: (text, ccOn) => {
+          this.store.set({ liveText: text, ccOn });
+          if (text && captionMode(this.store.get()) === 'youtube') void this.annotateLive(text);
+        },
+      });
+      this.live.start();
+      this.applyNativeHidden();
+    }
     void this.checkReminder();
   }
 
@@ -53,9 +69,44 @@ export class OverlayController {
     this.epoch++;
     this.sync?.dispose();
     this.sync = null;
+    this.live?.dispose(); // also restores YouTube's own caption box
+    this.live = null;
+    this.pendingWords.clear();
     this.session = null;
     this.pausedByUs = false;
     this.store.set({ ...initialOverlayState(), settings: this.settings, reminder: this.store.get().reminder });
+  }
+
+  // ---------- YouTube on-screen captions ("best effort") ----------
+
+  private live: LiveCaptions | null = null;
+  private readonly pendingWords = new Set<string>();
+
+  /** YouTube's caption box is hidden only while our overlay shows that same text. */
+  private applyNativeHidden(): void {
+    this.live?.setNativeHidden(captionMode(this.store.get()) === 'youtube');
+  }
+
+  async setYoutubeCaptions(enabled: boolean): Promise<void> {
+    this.store.set((s) => ({ settings: { ...s.settings, youtubeCaptions: enabled }, menuOpen: false }));
+    this.applyNativeHidden();
+    const text = this.store.get().liveText;
+    if (enabled && text) void this.annotateLive(text);
+    const res = await this.call<Settings>({ type: 'll/settings-set', settings: { youtubeCaptions: enabled } });
+    if (!res.ok) this.store.set({ message: { kind: 'error', text: `设置保存失败：${res.error}` } });
+  }
+
+  /** Annotates only words not seen before in this session; concurrent duplicates are skipped. */
+  private async annotateLive(text: string): Promise<void> {
+    const known = this.store.get().annotations;
+    const words = uniqueWords([text]).filter((w) => !(w in known) && !this.pendingWords.has(w));
+    if (words.length === 0) return;
+    for (const w of words) this.pendingWords.add(w);
+    const epoch = this.epoch;
+    const res = await this.call<Record<string, Annotation>>({ type: 'll/annotate', words });
+    if (epoch !== this.epoch) return;
+    for (const w of words) this.pendingWords.delete(w);
+    if (res.ok) this.store.set((s) => ({ annotations: { ...s.annotations, ...res.data } }));
   }
 
   onPlayerEvent(type: PlayerEventType): void {
@@ -104,12 +155,16 @@ export class OverlayController {
       },
     });
     this.sync.setIndex(index);
+    this.applyNativeHidden(); // file mode: give YouTube its own caption box back
     await this.annotate(cues, epoch);
   }
 
   clearCues(): void {
     this.sync?.setIndex(null);
     this.store.set({ cues: null, fileName: null, activeCues: [], annotations: {}, card: null, menuOpen: false, listOpen: false, message: null });
+    this.applyNativeHidden();
+    const text = this.store.get().liveText;
+    if (text && captionMode(this.store.get()) === 'youtube') void this.annotateLive(text);
   }
 
   private async annotate(cues: readonly CaptionCue[], epoch: number): Promise<void> {

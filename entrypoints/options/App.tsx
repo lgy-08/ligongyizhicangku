@@ -194,6 +194,10 @@ export function App() {
         <section>
           <h2>设置</h2>
           <label className="check">
+            <input type="checkbox" checked={settings.youtubeCaptions} onChange={(e) => void saveSettings({ youtubeCaptions: e.target.checked })} />
+            未导入字幕文件时，使用 YouTube 自带字幕（尽力而为：需打开 CC，只读取当前显示的文字，没有完整时间轴；开启期间 YouTube 原字幕框会被隐藏，避免重复显示）
+          </label>
+          <label className="check">
             <input type="checkbox" checked={settings.pauseOnLookup} onChange={(e) => void saveSettings({ pauseOnLookup: e.target.checked })} />
             查词时暂停视频（关闭词卡后自动继续）
           </label>
@@ -233,7 +237,9 @@ export function App() {
             词典数据：ECDICT（MIT License，Copyright (c) 2025 Linwei），已裁剪为常用词。<a href={licenseUrl} target="_blank" rel="noreferrer">许可证全文</a>
           </li>
           <li>不读取 Cookie 或账号信息，不上传观看历史，不接入任何云服务或付费 API。</li>
-          <li>只在 www.youtube.com 观看页运行；字幕来自你导入的 SRT/VTT 文件。</li>
+          <li>
+            只在 www.youtube.com 观看页运行。字幕来自你导入的 SRT/VTT 文件，或 YouTube 播放器当前显示的 CC 文字；不调用 YouTube 的字幕下载接口。
+          </li>
         </ul>
       </section>
     </main>
