@@ -213,6 +213,21 @@ describe('handleRequest: dictionary + vocabulary', () => {
     });
   });
 
+  it('define returns dictionary meanings for many words (vocabulary book)', async () => {
+    const { req } = setup();
+    expect(data(await req({ type: 'll/define', words: ['run', 'give up', 'zzz'] }))).toEqual({
+      entries: {
+        run: { phonetic: 'rʌn', translation: 'v. 跑\nn. 跑步' },
+        'give up': { phonetic: '', translation: '放弃, 停止' },
+      },
+      dictAvailable: true,
+      dictError: null,
+    });
+    const noDict = setup({ getDict: async () => ({ dict: null, error: '词典未加载' }) });
+    expect(data(await noDict.req({ type: 'll/define', words: ['run'] }))).toEqual({ entries: {}, dictAvailable: false, dictError: '词典未加载' });
+    expect(validateRequest({ type: 'll/define', words: 'run' })).toMatch(/array/);
+  });
+
   it('annotate maps every surface form to lemma, status, rank', async () => {
     const { req } = setup();
     await req({ type: 'll/vocab-set', lemma: 'run', status: 'unknown' });

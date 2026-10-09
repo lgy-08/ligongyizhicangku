@@ -7,6 +7,7 @@ import { DEFAULT_SETTINGS, sanitizeSettings, type CustomDefinition, type Setting
 import {
   validateRequest,
   type Annotation,
+  type DefineResult,
   type ImportResult,
   type KvRecord,
   type LlRequest,
@@ -155,6 +156,17 @@ export async function handleRequest(msg: unknown, deps: RouterDeps): Promise<LlR
               const e = dict.get(h.phrase);
               return e ? [{ phrase: h.phrase, entry: e }] : [];
             });
+          }
+        }
+        return { ok: true, data: result };
+      }
+      case 'll/define': {
+        const { dict, error } = await deps.getDict();
+        const result: DefineResult = { entries: {}, dictAvailable: dict !== null, dictError: error };
+        if (dict) {
+          for (const w of req.words) {
+            const e = dict.get(w);
+            if (e) result.entries[w] = { phonetic: e.phonetic, translation: e.translation };
           }
         }
         return { ok: true, data: result };

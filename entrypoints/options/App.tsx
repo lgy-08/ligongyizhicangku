@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { browser } from 'wxt/browser';
 import { sendLl } from '../../src/storage/client';
-import type { ImportResult, KvRecord, LlRequest, LlResponse } from '../../src/storage/protocol';
+import type { DefineResult, ImportResult, KvRecord, LlRequest, LlResponse } from '../../src/storage/protocol';
 import { LAST_EXPORT_KEY } from '../../src/storage/router';
 import type { BackupFile } from '../../src/vocab/backup';
 import { CARD_OPACITY_MAX, CARD_OPACITY_MIN, STATUS_LABEL, VOCAB_STATUSES, type CustomDefinition, type Settings, type VocabRecord, type VocabStatus } from '../../src/vocab/types';
@@ -23,6 +23,8 @@ export function App() {
   const [filter, setFilter] = useState<VocabStatus | 'all'>('all');
   const [query, setQuery] = useState('');
   const [notice, setNotice] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  const [meanings, setMeanings] = useState<Record<string, { phonetic: string; translation: string }>>({});
+  const [dictNote, setDictNote] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     const [v, d, s, e] = await Promise.all([
@@ -31,7 +33,19 @@ export function App() {
       call<Settings>({ type: 'll/settings-get' }),
       call<KvRecord | null>({ type: 'll/kv-get', key: LAST_EXPORT_KEY }),
     ]);
-    if (v.ok) setVocab(v.data);
+    if (v.ok) {
+      setVocab(v.data);
+      // Chinese meanings from the bundled dictionary (not stored in the vocabulary data).
+      const words = v.data.map((x) => x.lemma);
+      const found: Record<string, { phonetic: string; translation: string }> = {};
+      for (let i = 0; i < words.length; i += 5000) {
+        const r = await call<DefineResult>({ type: 'll/define', words: words.slice(i, i + 5000) });
+        if (!r.ok) break;
+        Object.assign(found, r.data.entries);
+        if (!r.data.dictAvailable) setDictNote(r.data.dictError ?? '词典未加载');
+      }
+      setMeanings(found);
+    }
     if (d.ok) setDefs(new Map(d.data.map((x) => [x.lemma, x])));
     if (s.ok) setSettings(s.data);
     if (e.ok) setLastExport(typeof e.data?.value === 'number' ? e.data.value : null);
@@ -51,10 +65,14 @@ export function App() {
 
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return vocab
-      .filter((v) => (filter === 'all' || v.status === filter) && (!q || v.lemma.includes(q) || v.lastWord?.includes(q)))
-      .sort((a, b) => b.updatedAt - a.updatedAt);
-  }, [vocab, filter, query]);
+    const matches = (v: VocabRecord) =>
+      !q ||
+      v.lemma.includes(q) ||
+      !!v.lastWord?.includes(q) ||
+      !!meanings[v.lemma]?.translation.includes(q) ||
+      !!defs.get(v.lemma)?.text.toLowerCase().includes(q);
+    return vocab.filter((v) => (filter === 'all' || v.status === filter) && matches(v)).sort((a, b) => b.updatedAt - a.updatedAt);
+  }, [vocab, filter, query, meanings, defs]);
 
   const changeStatus = async (lemma: string, status: VocabStatus | null) => {
     const res = await call<VocabRecord | null>({ type: 'll/vocab-set', lemma, status });
@@ -148,15 +166,17 @@ export function App() {
               {f === 'all' ? `全部 ${vocab.length}` : `${STATUS_LABEL[f]} ${counts[f]}`}
             </button>
           ))}
-          <input className="search" placeholder="搜索词元" value={query} onChange={(e) => setQuery(e.target.value)} />
+          <input className="search" placeholder="搜索英文或中文释义" value={query} onChange={(e) => setQuery(e.target.value)} />
         </div>
+        {dictNote && <p className="notice err">中文释义无法显示：{dictNote}</p>}
         {shown.length === 0 ? (
-          <p className="muted">还没有记录。在 YouTube 导入字幕后，点击字幕中的单词即可标记。</p>
+          <p className="muted">还没有记录。在 YouTube 字幕或已启用查词的网页中点击单词，即可在词卡里标记。</p>
         ) : (
           <table>
             <thead>
               <tr>
                 <th>词元</th>
+                <th>释义</th>
                 <th>最近遇到的词形</th>
                 <th>状态</th>
                 <th>我的释义</th>
@@ -166,7 +186,17 @@ export function App() {
             <tbody>
               {shown.slice(0, PAGE).map((v) => (
                 <tr key={v.lemma}>
-                  <td className="lemma">{v.lemma}</td>
+                  <td className="lemma">
+                    {v.lemma}
+                    {meanings[v.lemma]?.phonetic && <div className="ph">/{meanings[v.lemma]!.phonetic}/</div>}
+                  </td>
+                  <td className="meaning">
+                    {meanings[v.lemma] ? (
+                      meanings[v.lemma]!.translation.split('\n').slice(0, 2).join('\n')
+                    ) : (
+                      <span className="muted small">暂无释义</span>
+                    )}
+                  </td>
                   <td>{v.lastWord && v.lastWord !== v.lemma ? v.lastWord : ''}</td>
                   <td>
                     <select value={v.status} onChange={(e) => void changeStatus(v.lemma, e.target.value as VocabStatus)}>
@@ -208,6 +238,10 @@ export function App() {
               onChange={(e) => void saveSettings({ cardOpacity: Number(e.target.value) })}
             />
             {Math.round(settings.cardOpacity * 100)}%（越低越透明；刷新 YouTube 页面后生效）
+          </label>
+          <label className="check">
+            <input type="checkbox" checked={settings.webClickLookup} onChange={(e) => void saveSettings({ webClickLookup: e.target.checked })} />
+            网页查词：单击单词即显示释义（关闭后只响应双击和拖选；已启用的网页需重新启用才生效）
           </label>
           <label className="check">
             <input type="checkbox" checked={settings.pauseOnLookup} onChange={(e) => void saveSettings({ pauseOnLookup: e.target.checked })} />

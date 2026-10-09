@@ -1,6 +1,15 @@
 import { lineWords, MAX_SELECTION_WORDS } from '../dict/phrases';
 import type { CardPosition } from '../content/overlay-state';
 
+export interface RectLike {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+  width: number;
+  height: number;
+}
+
 /** Places where a selection is not a reading selection: typing, editing, code. */
 const EXCLUDED_SELECTOR = 'input, textarea, select, option, code, pre, kbd, samp, [contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"]';
 
@@ -10,6 +19,65 @@ export function isExcludedTarget(node: Node | null | undefined): boolean {
   if (!el) return false;
   if ((el as HTMLElement).isContentEditable) return true;
   return el.closest(EXCLUDED_SELECTOR) !== null;
+}
+
+/** Clicks on these do something else (navigate, submit, toggle): a single click must not look up. */
+const INTERACTIVE_SELECTOR =
+  'a[href], button, label, summary, select, option, input, textarea, [role="button"], [role="link"], [role="tab"], [role="menuitem"], [role="checkbox"], [role="switch"]';
+
+export function isInteractiveTarget(node: Node | null | undefined): boolean {
+  if (!node) return false;
+  const el = node.nodeType === 1 ? (node as Element) : node.parentElement;
+  return !!el && el.closest(INTERACTIVE_SELECTOR) !== null;
+}
+
+const WORD_CHAR = /[A-Za-z'’]/;
+
+/**
+ * Bounds [start, end) of the English word in `text` that contains `offset` (a caret position:
+ * a click on the right half of the last letter gives offset === end). Leading/trailing
+ * apostrophes are trimmed. Null if there is no word there.
+ */
+export function wordBounds(text: string, offset: number): { start: number; end: number } | null {
+  if (offset < 0 || offset > text.length) return null;
+  let i = offset;
+  if (!(i < text.length && WORD_CHAR.test(text[i]!)) && i > 0 && WORD_CHAR.test(text[i - 1]!)) i--;
+  if (i >= text.length || !WORD_CHAR.test(text[i]!)) return null;
+  let start = i;
+  let end = i + 1;
+  while (start > 0 && WORD_CHAR.test(text[start - 1]!)) start--;
+  while (end < text.length && WORD_CHAR.test(text[end]!)) end++;
+  while (start < end && /['’]/.test(text[start]!)) start++;
+  while (end > start && /['’]/.test(text[end - 1]!)) end--;
+  if (start >= end || !/[A-Za-z]/.test(text.slice(start, end))) return null;
+  return { start, end };
+}
+
+export interface WordHit {
+  node: Text;
+  start: number;
+  end: number;
+  rect: RectLike;
+}
+
+/**
+ * The word under a viewport point, using Chrome's caretRangeFromPoint. The click must land on
+ * the word's own glyphs (caretRangeFromPoint also answers for blank space at the end of a line).
+ */
+export function hitWordAtPoint(doc: Document, x: number, y: number): WordHit | null {
+  const d = doc as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null };
+  const caret = d.caretRangeFromPoint?.(x, y);
+  if (!caret || caret.startContainer.nodeType !== 3) return null;
+  const node = caret.startContainer as Text;
+  const b = wordBounds(node.data, caret.startOffset);
+  if (!b) return null;
+  const range = doc.createRange();
+  range.setStart(node, b.start);
+  range.setEnd(node, b.end);
+  const tol = 2;
+  const rects = Array.from(range.getClientRects());
+  const hit = rects.find((r) => x >= r.left - tol && x <= r.right + tol && y >= r.top - tol && y <= r.bottom + tol);
+  return hit ? { node, start: b.start, end: b.end, rect: range.getBoundingClientRect() } : null;
 }
 
 /** Longer selections are treated as "copying text", not as a lookup. */
@@ -58,15 +126,6 @@ export function contextWindow(full: string, start: number, end: number, word: st
   const wordIndex = lineWords(full.slice(a, start)).length;
   if (words[wordIndex]?.text.toLowerCase() !== word.toLowerCase()) return null;
   return { text, wordIndex };
-}
-
-export interface RectLike {
-  left: number;
-  top: number;
-  right: number;
-  bottom: number;
-  width: number;
-  height: number;
 }
 
 /**

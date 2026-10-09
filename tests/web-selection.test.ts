@@ -1,7 +1,43 @@
 // @vitest-environment happy-dom
 import { describe, expect, it } from 'vitest';
 import { classifyPage } from '../src/web/page-kind';
-import { classifySelection, contextWindow, isExcludedTarget, placeWebCard } from '../src/web/selection';
+import { classifySelection, contextWindow, isExcludedTarget, isInteractiveTarget, placeWebCard, wordBounds } from '../src/web/selection';
+
+describe('wordBounds', () => {
+  const t = "Don't stop — it's 'quoted' text.";
+  it('finds the word around a caret offset, including the right edge of its last letter', () => {
+    expect(wordBounds(t, 0)).toEqual({ start: 0, end: 5 }); // Don't
+    expect(wordBounds(t, 3)).toEqual({ start: 0, end: 5 });
+    expect(wordBounds(t, 5)).toEqual({ start: 0, end: 5 }); // caret right after the word
+    expect(wordBounds(t, 6)).toEqual({ start: 6, end: 10 }); // stop
+  });
+  it('trims surrounding apostrophes / quotes', () => {
+    const s = t.indexOf("'quoted'");
+    expect(t.slice(...Object.values(wordBounds(t, s + 2)!) as [number, number])).toBe('quoted');
+  });
+  it('returns null on spaces, punctuation and out of range', () => {
+    expect(wordBounds(t, t.indexOf('—'))).toBeNull();
+    expect(wordBounds('a  b', 2)).toBeNull();
+    expect(wordBounds('123', 1)).toBeNull();
+    expect(wordBounds(t, -1)).toBeNull();
+    expect(wordBounds(t, 999)).toBeNull();
+  });
+});
+
+describe('isInteractiveTarget', () => {
+  it('detects links, buttons and controls, not plain text', () => {
+    document.body.innerHTML = '<p id="p">plain <a id="a" href="#">link <b id="ab">bold</b></a> <a id="na">anchor</a></p><button id="b">x</button><div role="button" id="rb">y</div><summary id="s">z</summary>';
+    const $ = (id: string) => document.getElementById(id)!;
+    expect(isInteractiveTarget($('p').firstChild)).toBe(false);
+    expect(isInteractiveTarget($('a'))).toBe(true);
+    expect(isInteractiveTarget($('ab').firstChild)).toBe(true);
+    expect(isInteractiveTarget($('na'))).toBe(false); // <a> without href is not a link
+    expect(isInteractiveTarget($('b'))).toBe(true);
+    expect(isInteractiveTarget($('rb'))).toBe(true);
+    expect(isInteractiveTarget($('s'))).toBe(true);
+    expect(isInteractiveTarget(null)).toBe(false);
+  });
+});
 
 describe('classifySelection', () => {
   it('one English word -> word, trimming punctuation', () => {

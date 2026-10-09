@@ -5,8 +5,22 @@ import type { CallFn } from '../src/content/card-controller';
 import { createIdbStore } from '../src/storage/idb-store';
 import type { LlRequest } from '../src/storage/protocol';
 import { handleRequest } from '../src/storage/router';
+import { wordBounds, type WordHit } from '../src/web/selection';
 import { WebLookup } from '../src/web/web-lookup';
 import { fixtureDict } from './helpers/dict-fixture';
+
+/**
+ * Fake hit test (happy-dom has no layout): the "point" (x, y) means element #id = targets[y], char offset x
+ * in its first text node.
+ */
+const targets: string[] = [];
+const fakeHit = (x: number, y: number): WordHit | null => {
+  const el = document.getElementById(targets[y] ?? '');
+  const node = el?.firstChild;
+  if (!node || node.nodeType !== 3) return null;
+  const b = wordBounds((node as Text).data, x);
+  return b ? { node: node as Text, ...b, rect: { left: 0, top: 0, right: 10, bottom: 10, width: 10, height: 10 } } : null;
+};
 
 function rig() {
   const store = createIdbStore(new IDBFactory());
@@ -16,7 +30,7 @@ function rig() {
     calls.push(msg);
     return (await handleRequest(msg, deps)) as never;
   };
-  const web = new WebLookup(call, { noticeMs: 20 });
+  const web = new WebLookup(call, { noticeMs: 20, hitTest: fakeHit });
   return { web, store, calls };
 }
 
@@ -111,6 +125,52 @@ describe('WebLookup', () => {
     await until(() => r.web.store.get().notice === null);
     expect(r.web.store.get().notice).toBeNull();
     expect(r.calls.some((c) => c.type === 'll/settings-get')).toBe(true);
+  });
+
+  describe('single click', () => {
+    /** Click (no selection) at char offset `offset` of element #id. */
+    const clickAt = (id: string, offset: number, init: MouseEventInit = {}) => {
+      targets[0] = id;
+      document.getSelection()!.removeAllRanges();
+      const el = document.getElementById(id)!;
+      el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 0, detail: 1, clientX: offset, clientY: 0, ...init }));
+    };
+
+    beforeEach(() => {
+      document.body.insertAdjacentHTML(
+        'beforeend',
+        '<p id="c">We are looking forward to it.</p><p><a id="link" href="#">give up</a></p><p id="t2">kind of fun</p>',
+      );
+    });
+
+    it('a click on a word opens its card, with phrase hints from the paragraph', async () => {
+      clickAt('c', 'We are lo'.length);
+      await until(() => !!r.web.store.get().card?.result);
+      const card = r.web.store.get().card!;
+      expect(card).toMatchObject({ kind: 'word', word: 'looking', target: { from: 2 } });
+      expect(card.result!.phrases.map((p) => p.phrase)).toEqual(['look forward to']);
+    });
+
+    it('ignores links, modifier keys, multi-clicks, blank space and other buttons', async () => {
+      clickAt('link', 1);
+      clickAt('c', 3, { ctrlKey: true });
+      clickAt('c', 3, { shiftKey: true });
+      clickAt('c', 3, { detail: 2 });
+      clickAt('c', 3, { button: 1 });
+      clickAt('c', 'We are looking forward to it'.length + 1); // after the final "."
+      await new Promise((res) => setTimeout(res, 20));
+      expect(r.web.store.get().card).toBeNull();
+    });
+
+    it('can be turned off in settings (selection still works)', async () => {
+      r.web.store.set({ settings: { ...r.web.store.get().settings, webClickLookup: false } });
+      clickAt('t2', 1);
+      await new Promise((res) => setTimeout(res, 20));
+      expect(r.web.store.get().card).toBeNull();
+      selectAndRelease(document.getElementById('t2')!, 0, 7); // "kind of"
+      await until(() => !!r.web.store.get().card?.phrase);
+      expect(r.web.store.get().card!.phrase!.match!.phrase).toBe('kind of');
+    });
   });
 
   it('dispose removes every listener', async () => {

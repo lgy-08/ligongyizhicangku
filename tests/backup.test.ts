@@ -92,5 +92,8 @@ describe('sanitizeSettings', () => {
     expect(sanitizeSettings({ cardOpacity: 3 }).cardOpacity).toBe(1);
     expect(sanitizeSettings({ cardOpacity: 0.666 }).cardOpacity).toBe(0.67);
     expect(sanitizeSettings({ cardOpacity: 'x' }).cardOpacity).toBe(DEFAULT_SETTINGS.cardOpacity);
+    expect(DEFAULT_SETTINGS.webClickLookup).toBe(true);
+    expect(sanitizeSettings({ webClickLookup: false }).webClickLookup).toBe(false);
+    expect(sanitizeSettings({ webClickLookup: 'no' }).webClickLookup).toBe(true);
   });
 });

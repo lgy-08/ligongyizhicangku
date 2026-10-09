@@ -20,6 +20,8 @@ export type LlRequest =
     }
   | { type: 'll/phrase-lookup'; text: string; from: number; to: number }
   | { type: 'll/annotate'; words: string[] }
+  /** Dictionary entries for many words at once (vocabulary book). */
+  | { type: 'll/define'; words: string[] }
   | { type: 'll/vocab-set'; lemma: string; status: VocabStatus | null; word?: string }
   | { type: 'll/vocab-list' }
   | { type: 'll/custom-def-set'; lemma: string; text: string }
@@ -84,6 +86,13 @@ export interface PhraseLookupResult {
   dictError: string | null;
 }
 
+export interface DefineResult {
+  /** Present only for words the dictionary has. */
+  entries: Record<string, { phonetic: string; translation: string }>;
+  dictAvailable: boolean;
+  dictError: string | null;
+}
+
 export interface Annotation {
   lemma: string;
   status: VocabStatus | null;
@@ -125,6 +134,7 @@ const ALL = new Set([
   'll/lookup',
   'll/phrase-lookup',
   'll/annotate',
+  'll/define',
   'll/vocab-set',
   'll/custom-def-set',
   'll/settings-set',
@@ -163,6 +173,7 @@ export function validateRequest(msg: unknown): string | null {
       if ((m.to as number) - (m.from as number) + 1 > MAX_SELECTION_WORDS) return `select at most ${MAX_SELECTION_WORDS} words`;
       return null;
     case 'll/annotate':
+    case 'll/define':
       if (!Array.isArray(m.words)) return 'words must be an array';
       if (m.words.length > MAX_ANNOTATE_WORDS) return `too many words (max ${MAX_ANNOTATE_WORDS})`;
       return m.words.every((w) => isStr(w, MAX_WORD_LENGTH)) ? null : 'every word must be a non-empty string';

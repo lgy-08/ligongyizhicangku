@@ -42,6 +42,8 @@ export interface Settings {
   youtubeCaptions: boolean;
   /** Background opacity of the word card, 0.4 (very see-through) .. 1 (solid). */
   cardOpacity: number;
+  /** Web lookup: a single click on a word opens its card (double-click and selection always work). */
+  webClickLookup: boolean;
 }
 
 export const CARD_OPACITY_MIN = 0.4;
@@ -50,6 +52,7 @@ export const CARD_OPACITY_MAX = 1;
 export const DEFAULT_SETTINGS: Settings = {
   youtubeCaptions: true,
   cardOpacity: 0.78,
+  webClickLookup: true,
   pauseOnLookup: false,
   showDiagnostics: false,
   highlightRare: false,
@@ -68,6 +71,7 @@ export function sanitizeSettings(input: unknown, base: Settings = DEFAULT_SETTIN
   const s = input as Record<string, unknown>;
   if (typeof s.pauseOnLookup === 'boolean') out.pauseOnLookup = s.pauseOnLookup;
   if (typeof s.youtubeCaptions === 'boolean') out.youtubeCaptions = s.youtubeCaptions;
+  if (typeof s.webClickLookup === 'boolean') out.webClickLookup = s.webClickLookup;
   if (typeof s.cardOpacity === 'number' && Number.isFinite(s.cardOpacity)) {
     out.cardOpacity = Math.round(Math.min(CARD_OPACITY_MAX, Math.max(CARD_OPACITY_MIN, s.cardOpacity)) * 100) / 100;
   }

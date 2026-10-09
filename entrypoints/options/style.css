@@ -44,6 +44,8 @@ input[type="number"] { width: 90px; margin: 0 6px; padding: 2px 6px; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
 td.lemma { font-weight: 600; }
+td.lemma .ph { font-weight: normal; font-size: 11px; color: var(--muted); }
+td.meaning { max-width: 280px; white-space: pre-line; font-size: 12px; }
 td.def { max-width: 260px; white-space: pre-line; }
 .notice { padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border); }
 .notice.ok { color: var(--ok); }
