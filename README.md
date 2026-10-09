@@ -36,6 +36,8 @@ npm run build                  # 产物在 .output\chrome-mv3
 3. 打开任意 `https://www.youtube.com/watch?v=...`，视频左上角会出现半透明的 “LL” 按钮。
 4. 代码修改后重新 `npm run build`，在扩展卡片上点“重新加载”，再刷新 YouTube 页面。
 
+**微软 Edge**：同一个 `.output\chrome-mv3` 文件夹可直接在 `edge://extensions`（开启“开发人员模式”）中“加载解压缩的扩展”，已在 Edge 154 实测可用。两个浏览器的生词本分开存放，用导出/导入备份同步。
+
 权限：`activeTab` 和 `scripting`，没有 `host_permissions`。YouTube 内容脚本只匹配 `www.youtube.com`；网页查词脚本只在用户于弹出窗口点击“在本页启用查词”时注入当前标签页。
 
 ## 使用
