@@ -1,7 +1,53 @@
 // @vitest-environment happy-dom
 import { describe, expect, it } from 'vitest';
 import { classifyPage } from '../src/web/page-kind';
-import { classifySelection, contextWindow, isExcludedTarget, isInteractiveTarget, placeWebCard, wordBounds } from '../src/web/selection';
+import {
+  blockContext,
+  classifySelection,
+  contextWindow,
+  isExcludedTarget,
+  isInteractiveTarget,
+  placeWebCard,
+  sentenceAround,
+  wordBounds,
+} from '../src/web/selection';
+
+describe('sentenceAround', () => {
+  const text = 'First one. We ran out of milk this morning! Then we left.\nNew line here';
+  const sel = (s: string) => {
+    const i = text.indexOf(s);
+    return sentenceAround(text, i, i + s.length);
+  };
+  it('expands to the sentence boundaries', () => {
+    expect(sel('ran out of')).toBe('We ran out of milk this morning!');
+    expect(sel('First')).toBe('First one.');
+    expect(sel('we left')).toBe('Then we left.');
+    expect(sel('line')).toBe('New line here');
+  });
+  it('keeps a closing quote and trims long sentences around the selection', () => {
+    expect(sentenceAround('He said "give up." Then.', 9, 16)).toBe('He said "give up."');
+    const long = `${'alpha '.repeat(100)}target ${'omega '.repeat(100)}.`;
+    const i = long.indexOf('target');
+    const s = sentenceAround(long, i, i + 6, 80);
+    expect(s.length).toBeLessThanOrEqual(82);
+    expect(s).toContain('target');
+    expect(s.startsWith('…') && s.endsWith('…')).toBe(true);
+  });
+  it('returns empty for invalid ranges', () => {
+    expect(sentenceAround('abc', 2, 1)).toBe('');
+  });
+});
+
+describe('blockContext', () => {
+  it('gives the block text and the selection offsets across inline elements', () => {
+    document.body.innerHTML = '<p id="p">We <b>ran out</b> of milk. Next.</p>';
+    const b = document.querySelector('b')!;
+    const range = document.createRange();
+    range.setStart(b.firstChild!, 0);
+    range.setEnd(b.firstChild!, 7);
+    expect(blockContext(range)).toEqual({ text: 'We ran out of milk. Next.', start: 3, end: 10 });
+  });
+});
 
 describe('wordBounds', () => {
   const t = "Don't stop — it's 'quoted' text.";
@@ -48,9 +94,16 @@ describe('classifySelection', () => {
     expect(classifySelection('give\n up')).toEqual({ kind: 'phrase', text: 'give up', from: 0, to: 1 });
     expect(classifySelection(Array(12).fill('w').join(' '))).toMatchObject({ kind: 'phrase', to: 11 });
   });
-  it('ignores long selections (copying), CJK text, numbers and empty selections', () => {
-    expect(classifySelection(Array(13).fill('w').join(' '))).toEqual({ kind: 'none' });
-    expect(classifySelection('x'.repeat(201))).toEqual({ kind: 'none' });
+  it('more than 12 words (or over 200 chars) -> "long" (translate on request), up to 1500 chars', () => {
+    const thirteen = Array(13).fill('w').join(' ');
+    expect(classifySelection(thirteen)).toEqual({ kind: 'long', text: thirteen });
+    const longTwo = `${'a'.repeat(150)} ${'b'.repeat(150)}`;
+    expect(classifySelection(longTwo)).toEqual({ kind: 'long', text: longTwo });
+    expect(classifySelection(Array(400).fill('word').join(' '))).toEqual({ kind: 'none' }); // > 1500 chars
+    expect(classifySelection('x'.repeat(201))).toEqual({ kind: 'none' }); // one long token is not text
+  });
+
+  it('ignores CJK text, numbers and empty selections', () => {
     expect(classifySelection('这是 give up')).toEqual({ kind: 'none' });
     expect(classifySelection('2026 / 10')).toEqual({ kind: 'none' });
     expect(classifySelection('   ')).toEqual({ kind: 'none' });

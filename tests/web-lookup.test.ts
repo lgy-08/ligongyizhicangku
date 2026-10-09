@@ -30,8 +30,17 @@ function rig() {
     calls.push(msg);
     return (await handleRequest(msg, deps)) as never;
   };
-  const web = new WebLookup(call, { noticeMs: 20, hitTest: fakeHit });
-  return { web, store, calls };
+  const translated: string[] = [];
+  const translator = {
+    translate: async (text: string, onProgress?: (p: number) => void) => {
+      translated.push(text);
+      onProgress?.(1);
+      if (text.includes('FAIL')) return { ok: false as const, reason: 'error' as const, error: '翻译失败：test' };
+      return { ok: true as const, text: `【${text}】` };
+    },
+  };
+  const web = new WebLookup(call, { noticeMs: 20, hitTest: fakeHit, translator });
+  return { web, store, calls, translated };
 }
 
 /** Selects [start, end) of the first text node of `el`, then releases the mouse on it. */
@@ -170,6 +179,88 @@ describe('WebLookup', () => {
       selectAndRelease(document.getElementById('t2')!, 0, 7); // "kind of"
       await until(() => !!r.web.store.get().card?.phrase);
       expect(r.web.store.get().card!.phrase!.match!.phrase).toBe('kind of');
+    });
+  });
+
+  describe('machine translation', () => {
+    it('a phrase selection shows dictionary result + machine translation of the selection and its sentence', async () => {
+      const p = document.getElementById('p')!;
+      const s = p.textContent!.indexOf('gave up');
+      selectAndRelease(p, s, s + 7);
+      await until(() => r.web.store.get().card?.mt?.sentence?.status === 'done');
+      const card = r.web.store.get().card!;
+      expect(card.phrase!.match!.phrase).toBe('give up');
+      expect(card.mt).toEqual({
+        status: 'done',
+        text: '【gave up】',
+        sentence: { source: 'We are looking forward to it, honestly I gave up.', status: 'done', text: '【We are looking forward to it, honestly I gave up.】' },
+      });
+    });
+
+    it('no sentence translation when the selection is the whole sentence; errors are shown', async () => {
+      document.body.insertAdjacentHTML('beforeend', '<p id="whole">kind of fun.</p><p id="bad">FAIL here now</p>');
+      selectAndRelease(document.getElementById('whole')!, 0, 12);
+      await until(() => r.web.store.get().card?.mt?.status === 'done');
+      expect(r.web.store.get().card!.mt!.sentence).toBeUndefined();
+      selectAndRelease(document.getElementById('bad')!, 0, 9);
+      await until(() => r.web.store.get().card?.mt?.status === 'error');
+      expect(r.web.store.get().card!.mt).toEqual({ status: 'error', error: '翻译失败：test' });
+    });
+
+    it('a long selection offers a "译" button; clicking it opens a translation card', async () => {
+      const long = 'This is a much longer sentence that somebody selected because they want to read it in Chinese now.';
+      document.body.insertAdjacentHTML('beforeend', `<p id="long">${long}</p>`);
+      selectAndRelease(document.getElementById('long')!, 0, long.length);
+      expect(r.web.store.get().card).toBeNull();
+      expect(r.web.store.get().offer).toMatchObject({ text: long });
+      r.web.translateOffer();
+      expect(r.web.store.get().offer).toBeNull();
+      await until(() => r.web.store.get().card?.mt?.status === 'done');
+      expect(r.web.store.get().card).toMatchObject({ kind: 'text', word: long, mt: { status: 'done', text: `【${long}】` } });
+      expect(r.web.store.get().card!.mt!.sentence).toBeUndefined();
+    });
+
+    it('the offer disappears on a click elsewhere', async () => {
+      const long = Array(15).fill('word').join(' ');
+      document.body.insertAdjacentHTML('beforeend', `<p id="l2">${long}</p>`);
+      selectAndRelease(document.getElementById('l2')!, 0, long.length);
+      expect(r.web.store.get().offer).not.toBeNull();
+      document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      expect(r.web.store.get().offer).toBeNull();
+    });
+
+    it('"机器翻译试试" on a word the dictionary lacks', async () => {
+      const p = document.getElementById('p')!;
+      const s = p.textContent!.indexOf('honestly');
+      selectAndRelease(p, s, s + 8);
+      await until(() => !!r.web.store.get().card?.result);
+      expect(r.web.store.get().card!.mt).toBeNull(); // not automatic for single words
+      r.web.actions.machineTranslate!();
+      await until(() => r.web.store.get().card?.mt?.sentence?.status === 'done');
+      expect(r.web.store.get().card!.mt!.text).toBe('【honestly】');
+    });
+
+    it('turned off in settings: no translation, no offer', async () => {
+      r.web.store.set({ settings: { ...r.web.store.get().settings, webTranslate: false } });
+      const p = document.getElementById('p')!;
+      const s = p.textContent!.indexOf('gave up');
+      selectAndRelease(p, s, s + 7);
+      await until(() => !!r.web.store.get().card?.phrase);
+      const long = Array(15).fill('word').join(' ');
+      document.body.insertAdjacentHTML('beforeend', `<p id="l3">${long}</p>`);
+      selectAndRelease(document.getElementById('l3')!, 0, long.length);
+      await new Promise((res) => setTimeout(res, 20));
+      expect(r.translated).toEqual([]);
+      expect(r.web.store.get().offer).toBeNull();
+    });
+
+    it('a translation for a card that was closed is dropped', async () => {
+      const p = document.getElementById('p')!;
+      const s = p.textContent!.indexOf('gave up');
+      selectAndRelease(p, s, s + 7);
+      r.web.cards.closeCard();
+      await new Promise((res) => setTimeout(res, 20));
+      expect(r.web.store.get().card).toBeNull();
     });
   });
 

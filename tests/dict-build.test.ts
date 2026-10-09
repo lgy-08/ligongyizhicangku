@@ -60,12 +60,15 @@ describe('selectEntries', () => {
       'give up,,,"放弃, 停止\\n[法] 交出",,,,,0,0,,,',
       'zinc oxide,,,"[化] 氧化锌",,,,,0,0,,,',
       'give up quark,,,"测试",,,,,0,0,,,',
-      'up up up up up up,,,"太长",,,,,0,0,,,',
+      'up up up up up up up,,,"太长",,,,,0,0,,,',
+      "give up one's,,,\"占位词测试\",,,,,0,0,,,",
+      'give up someone,,,"占位词测试2",,,,,0,0,,,',
     ]);
     const { entries, stats } = selectEntries(rows);
     const phraseEntries = entries.filter((e) => e[0].includes(' '));
-    expect(phraseEntries).toEqual([['give up', '', '放弃, 停止', '', 0]]); // technical line removed
-    expect(stats).toMatchObject({ words: 5, phrases: 1 });
+    expect(phraseEntries.map((e) => e[0])).toEqual(['give up', "give up one's", 'give up someone']); // 7 words dropped
+    expect(phraseEntries[0]).toEqual(['give up', '', '放弃, 停止', '', 0]); // technical line removed
+    expect(stats).toMatchObject({ words: 5, phrases: 3 });
   });
 
   it('fails clearly when a column is missing', () => {

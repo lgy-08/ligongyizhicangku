@@ -39,3 +39,11 @@
 .card .link { background: none; border: 0; color: #8fb3d9; cursor: pointer; padding: 0; font-size: 12px; }
 .card .meta { color: #888; font-size: 11px; margin-top: 8px; }
 .card .err { color: #ff8f80; font-size: 12px; margin-top: 6px; }
+/* machine translation: visibly different from dictionary content */
+.card .src-label { display: block; color: #9cc3ff; font-size: 11px; margin-top: 4px; }
+.card .mt { margin: 8px 0 4px; padding: 6px 8px; border-left: 3px solid #8a7cff; background: rgba(138, 124, 255, .12); border-radius: 4px; }
+.card .mt > small { display: block; color: #b9b0ff; font-size: 11px; }
+.card .mt-text { font-size: 15px; margin: 2px 0; white-space: pre-line; }
+.card .mt-sentence { margin-top: 6px; padding-top: 4px; border-top: 1px dashed rgba(255, 255, 255, .18); color: #cfcfd4; font-size: 12px; }
+.card .mt-sentence small { display: block; color: #9a9aa6; font-size: 11px; }
+.card.text-card .head .source { color: #cfcfd4; font-size: 12px; line-height: 1.4; flex: 1; }

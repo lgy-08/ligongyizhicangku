@@ -83,6 +83,7 @@ IndexedDB 数据库 `lingualens`，版本 2。升级只新增仓库，从不删�
 4. **标记**：`ll/vocab-set` → 返回新记录 → 本地把同一词元的所有词形一起更新高亮。
 5. **YouTube 字幕模式**：`captionMode()` 在“有导入文件 → file；否则开关开启 → youtube；否则 none”中选择。youtube 模式下 `LiveCaptions` 监听 `#movie_player` 子树变化，读取 `.caption-visual-line` / `.ytp-caption-segment` 文字和 CC 按钮状态，只对新出现的单词发 `ll/annotate`。同时把 `.ytp-caption-window-container` 用内联样式设为透明，离开该模式时恢复原值。
 6. **网页查词（LL-003）**：工具栏弹窗（`entrypoints/popup`）用 `scripting.executeScript` 把未列入 manifest 的 `web-lookup.js` 注入当前标签页（`activeTab` 授权），并设置 ON 角标；background 在标签页开始加载新文档时清除角标。脚本在 `<html>` 上挂一个 shadow root 图层，`WebLookup` 被动监听 mouseup：一个英文单词 → `ll/lookup`（附带所在文本的上下文以查找短语），2–12 个词 → `ll/phrase-lookup`；输入框、可编辑区和代码块排除。词卡逻辑由 `CardController`（`src/content/card-controller.ts`）提供，YouTube 叠加层和网页查词共用；词卡界面在 `src/content/ui/WordCard.tsx`，样式在 `card.css`。生词状态写入同一个 IndexedDB，与 YouTube 共用生词本。
+   **机器翻译（LL-004）**：`TranslatorService`（`src/web/translator.ts`）封装 Chrome 内置 Translator（en→zh，本机运行），优先在隔离环境直接调用，否则经页面 MAIN world 的 `translator-bridge.js` 以 postMessage 代为翻译。2–12 个词的短语词卡在词典结果之外自动附上 `card.mt`（选区译文 + 所在整句译文）；更长的选区显示“译”按钮，点击后打开 `kind: 'text'` 的译文卡片。机器翻译结果只放在卡片状态中，不写入存储。
 7. **已出现的字幕列表**：youtube 模式下每个可见字幕行以“首次出现时的视频时间”为键插入 `LiveTranscript`（有序数组，二分插入），8 秒窗口内同文去重、前缀增长合并。`Coverage` 根据 timeupdate 和 seeking 记录实际播放过的区间，`buildTranscriptView` 在不连续处插入空缺标记。全部只在内存中，`detachSession` 时清空；广告期间和会话开始时的残留文字不记录。
 8. **备份提醒**：每次页面加载最多检查一次 `ll/reminder-check`；满足条件时 background 先记下提醒时间，再返回 `remind: true`，保证每个周期只提醒一次。
 

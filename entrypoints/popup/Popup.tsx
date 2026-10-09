@@ -5,6 +5,7 @@ import { classifyPage, type PageKind } from '../../src/web/page-kind';
 type State = { kind: 'loading' } | { kind: PageKind } | { kind: 'on' } | { kind: 'off' } | { kind: 'error'; message: string };
 
 const SCRIPT = '/web-lookup.js';
+const BRIDGE = '/translator-bridge.js';
 
 async function activeTab() {
   const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
@@ -42,6 +43,11 @@ export function Popup() {
   const enable = async () => {
     if (tabId === null) return;
     try {
+      // Fallback for machine translation, used only if the Translator API is not reachable from the
+      // isolated world. Failure here must not block word lookup.
+      await browser.scripting
+        .executeScript({ target: { tabId }, files: [BRIDGE] as never, world: 'MAIN' })
+        .catch(() => undefined);
       await browser.scripting.executeScript({ target: { tabId }, files: [SCRIPT] as never });
       await browser.action.setBadgeBackgroundColor({ tabId, color: '#2f6fdb' });
       await browser.action.setBadgeText({ tabId, text: 'ON' });
@@ -71,7 +77,9 @@ export function Popup() {
           <button className="primary" onClick={() => void enable()}>
             在本页启用查词
           </button>
-          <p className="muted small">启用后：双击英文单词查释义，选中 2–12 个词查短语。只对当前页面生效，刷新或跳转后需重新启用。</p>
+          <p className="muted small">
+            启用后：单击英文单词查释义；选中 2–12 个词查短语并显示机器翻译；选中更长的句子可点“译”。只对当前页面生效，刷新或跳转后需重新启用。
+          </p>
         </>
       )}
       {state.kind === 'on' && (

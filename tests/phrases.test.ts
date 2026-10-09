@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { findPhrases, lineWords, matchSelection } from '../src/dict/phrases';
-import { fixtureDict } from './helpers/dict-fixture';
+import { Dictionary } from '../src/dict/dictionary';
+import { FIXTURE_DICT_FILE, fixtureDict } from './helpers/dict-fixture';
 
 const d = fixtureDict();
 const phrases = (text: string, opts = {}) => findPhrases(lineWords(text), d, opts).map((h) => [h.phrase, h.start, h.end]);
@@ -43,6 +44,17 @@ describe('findPhrases', () => {
 
   it('restricts to a selection', () => {
     expect(phrases('as a matter of fact it is kind of fun', { within: [6, 9] })).toEqual([['kind of', 7, 8]]);
+  });
+
+  it('maps pronouns to the dictionary placeholders one\'s / oneself', () => {
+    const d2 = new Dictionary({
+      ...FIXTURE_DICT_FILE,
+      entries: [...FIXTURE_DICT_FILE.entries, ["one's cup of tea", '', '喜爱的事物', '', 0], ['pull oneself together', '', '振作起来', '', 0], ['hit the nail on the head', '', '一针见血', '', 0]],
+    });
+    const f = (text: string) => findPhrases(lineWords(text), d2).map((h) => h.phrase);
+    expect(f("It's not my cup of tea")).toEqual(["one's cup of tea"]);
+    expect(f('You need to pull yourself together')).toEqual(['pull oneself together']);
+    expect(f('You hit the nail on the head')).toEqual(['hit the nail on the head']); // 6 words
   });
 
   it('known limitation: separated phrasal verbs are not matched', () => {

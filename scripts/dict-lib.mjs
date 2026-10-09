@@ -105,7 +105,10 @@ export function generalTranslation(translation) {
  * - phrases: 2..phraseMaxWords words, every word (hyphen parts included) a kept word with
  *   rank <= phraseWordMaxRank, and at least one general-language (non-technical) translation line.
  */
-export function selectEntries(rows, { maxRank = 40000, phraseMaxWords = 5, phraseWordMaxRank = 10000 } = {}) {
+/** Placeholders used inside ECDICT idioms ("one's cup of tea", "pull oneself together"): always allowed. */
+export const PHRASE_PLACEHOLDERS = new Set(["one's", 'oneself', 'someone', 'something', 'somebody', "someone's", "somebody's"]);
+
+export function selectEntries(rows, { maxRank = 40000, phraseMaxWords = 6, phraseWordMaxRank = 10000 } = {}) {
   const header = rows[0];
   const col = (name) => {
     const i = header.indexOf(name);
@@ -168,6 +171,7 @@ export function selectEntries(rows, { maxRank = 40000, phraseMaxWords = 5, phras
 
   // 3) Phrases, made only of common words.
   const commonWord = (w) => {
+    if (PHRASE_PLACEHOLDERS.has(w)) return true;
     const e = kept.get(w);
     return !!e && e[4] > 0 && e[4] <= phraseWordMaxRank;
   };
@@ -176,7 +180,7 @@ export function selectEntries(rows, { maxRank = 40000, phraseMaxWords = 5, phras
     const phrase = row[C.word];
     const words = phrase.split(' ');
     if (words.length > phraseMaxWords) continue;
-    if (!words.flatMap((w) => w.split('-')).every(commonWord)) continue;
+    if (!words.every((w) => PHRASE_PLACEHOLDERS.has(w) || w.split('-').every(commonWord))) continue;
     const translation = generalTranslation(compactTranslation(row[C.translation] ?? ''));
     if (!translation) continue;
     phrases.push([phrase, row[C.phonetic] ?? '', translation, (row[C.tag] ?? '').trim(), num(row[C.frq]) || num(row[C.bnc])]);

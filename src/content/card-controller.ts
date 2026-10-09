@@ -12,6 +12,8 @@ export interface CardActions {
   setEditing(editing: boolean): void;
   saveCustomDef(text: string): Promise<void>;
   setStatus(status: VocabStatus | null): Promise<void>;
+  /** Optional (web pages): machine-translate the current word card's word. */
+  machineTranslate?: () => void;
 }
 
 export interface CardHooks {
@@ -50,6 +52,26 @@ export class CardController<S extends { card: CardState | null }> implements Car
     this.seq++;
   }
 
+  /** Identifies the card currently shown; async work for it should check this before updating. */
+  get currentSeq(): number {
+    return this.seq;
+  }
+
+  /** Updates the current card only if it is still card `seq`. */
+  patch(seq: number, update: (card: CardState) => Partial<CardState>): void {
+    const card = this.card;
+    if (seq !== this.seq || !card) return;
+    this.setCard({ ...card, ...update(card) });
+  }
+
+  /** Card for a longer text with no dictionary lookup (machine translation fills it in). Returns its seq. */
+  openTextCard(text: string, pos: CardPosition): number {
+    const seq = this.show('text', text, pos, null);
+    const card = this.card;
+    if (card) this.setCard({ ...card, loading: false });
+    return seq;
+  }
+
   private show(kind: CardState['kind'], word: string, pos: CardPosition, target: CardTarget | null): number {
     this.hooks.onOpen?.();
     this.setCard({
@@ -63,6 +85,7 @@ export class CardController<S extends { card: CardState | null }> implements Car
       loading: true,
       result: null,
       phrase: null,
+      mt: null,
       error: null,
       editing: false,
       saving: false,

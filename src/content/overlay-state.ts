@@ -21,14 +21,27 @@ export interface CardTarget {
   to: number;
 }
 
+/** Machine translation shown in a card (web pages only). Always labelled; never stored. */
+export interface MtState {
+  status: 'loading' | 'downloading' | 'done' | 'error';
+  /** Language-pack download progress 0..1 (first use only). */
+  progress?: number;
+  text?: string;
+  error?: string;
+  /** Translation of the sentence the selection is in, as context. */
+  sentence?: { source: string; status: 'loading' | 'done' | 'error'; text?: string };
+}
+
 export interface CardState extends CardPosition {
-  kind: 'word' | 'phrase';
+  /** word / phrase: dictionary cards; text: machine translation of a longer selection. */
+  kind: 'word' | 'phrase' | 'text';
   /** Clicked word, or the selected words for a phrase card. */
   word: string;
   target: CardTarget | null;
   loading: boolean;
   result: LookupResult | null;
   phrase: PhraseLookupResult | null;
+  mt: MtState | null;
   error: string | null;
   editing: boolean;
   saving: boolean;

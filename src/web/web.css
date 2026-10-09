@@ -12,4 +12,12 @@
   border-radius: 8px; padding: 8px 12px; font-size: 13px; box-shadow: 0 6px 20px rgba(0, 0, 0, .3);
   display: flex; gap: 10px; align-items: flex-start;
 }
+/* "译" button next to a long selection */
+.offer {
+  position: fixed; pointer-events: auto; width: 28px; height: 28px; border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, .25); background: rgba(90, 76, 220, .92); color: #fff;
+  font-size: 14px; font-weight: 600; cursor: pointer; box-shadow: 0 3px 10px rgba(0, 0, 0, .3);
+  display: flex; align-items: center; justify-content: center; padding: 0;
+}
+.offer:hover { background: rgba(110, 96, 240, 1); }
 .notice button { background: none; border: 0; color: #9cc3ff; cursor: pointer; font-size: 12px; padding: 0; white-space: nowrap; }

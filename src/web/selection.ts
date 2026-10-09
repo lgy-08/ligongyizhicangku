@@ -83,23 +83,71 @@ export function hitWordAtPoint(doc: Document, x: number, y: number): WordHit | n
 /** Longer selections are treated as "copying text", not as a lookup. */
 export const MAX_SELECTION_CHARS = 200;
 
+/** Longest selection offered for machine translation ("译" button). */
+export const MAX_LONG_SELECTION_CHARS = 1500;
+
 export type SelectionKind =
   | { kind: 'none' }
   | { kind: 'word'; word: string }
-  | { kind: 'phrase'; text: string; from: number; to: number };
+  | { kind: 'phrase'; text: string; from: number; to: number }
+  /** More than 12 words: may be copying, so only a small "译" button is offered. */
+  | { kind: 'long'; text: string };
 
 /**
- * One English word -> word card; 2..12 words -> phrase card; anything else (empty, long,
- * contains CJK text, no English words) -> ignored.
+ * One English word -> word card; 2..12 words (<= 200 chars) -> phrase card; longer English text
+ * (<= 1500 chars) -> "long" (translate on request); empty / CJK / no English words -> ignored.
  */
 export function classifySelection(raw: string): SelectionKind {
   const text = raw.replace(/\s+/g, ' ').trim();
-  if (!text || text.length > MAX_SELECTION_CHARS) return { kind: 'none' };
+  if (!text || text.length > MAX_LONG_SELECTION_CHARS) return { kind: 'none' };
   if (/[぀-ヿ㐀-鿿가-힯]/.test(text)) return { kind: 'none' };
   const words = lineWords(text);
-  if (words.length === 0 || words.length > MAX_SELECTION_WORDS) return { kind: 'none' };
+  if (words.length === 0) return { kind: 'none' };
+  if (words.length > MAX_SELECTION_WORDS || text.length > MAX_SELECTION_CHARS) return words.length >= 2 ? { kind: 'long', text } : { kind: 'none' };
   if (words.length === 1) return { kind: 'word', word: words[0]!.text };
   return { kind: 'phrase', text, from: 0, to: words.length - 1 };
+}
+
+/**
+ * The sentence containing text[start, end): from the previous sentence end (. ! ? or a line break)
+ * to the next one, whitespace-normalized and at most `max` chars (cut at spaces around the selection).
+ */
+export function sentenceAround(text: string, start: number, end: number, max = 300): string {
+  if (start < 0 || end > text.length || start >= end) return '';
+  let a = start;
+  while (a > 0 && !/[.!?]\s/.test(text.slice(a - 2, a)) && text[a - 1] !== '\n') a--;
+  let b = end;
+  while (b < text.length && !/[.!?]/.test(text[b - 1] ?? '') && text[b] !== '\n') b++;
+  // the loop above stops right after a sentence end; also stop at a closing quote/bracket
+  while (b < text.length && /["'”’)\]]/.test(text[b]!)) b++;
+  let s = text.slice(a, b);
+  if (s.length > max) {
+    const rel = start - a;
+    const from = Math.max(0, rel - Math.floor((max - (end - start)) / 2));
+    const cut = s.slice(from, from + max);
+    const left = from > 0 ? cut.indexOf(' ') + 1 : 0;
+    const right = from + max < s.length ? cut.lastIndexOf(' ') : cut.length;
+    s = `${from > 0 ? '…' : ''}${cut.slice(left, right > left ? right : cut.length)}${from + max < s.length ? '…' : ''}`;
+  }
+  return s.replace(/\s+/g, ' ').trim();
+}
+
+const BLOCK_SELECTOR = 'p, li, dd, dt, td, th, blockquote, figcaption, caption, h1, h2, h3, h4, h5, h6, article, section, div';
+
+/** Text of the block around a range and the range's offsets inside it (for sentenceAround). */
+export function blockContext(range: Range): { text: string; start: number; end: number } | null {
+  const anchor = range.commonAncestorContainer;
+  const el = (anchor.nodeType === 1 ? (anchor as Element) : anchor.parentElement)?.closest(BLOCK_SELECTOR);
+  if (!el) return null;
+  const doc = el.ownerDocument;
+  const pre = doc.createRange();
+  pre.setStart(el, 0);
+  pre.setEnd(range.startContainer, range.startOffset);
+  const start = pre.toString().length;
+  const selected = range.toString().length;
+  const text = el.textContent ?? '';
+  if (start + selected > text.length) return null;
+  return { text, start, end: start + selected };
 }
 
 /**

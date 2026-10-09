@@ -3,7 +3,12 @@ import { lemmatize, normalizeWord } from './lemmatize';
 import { tokenize } from './tokenize';
 
 /** Longest phrase the dictionary build keeps (scripts/dict-lib.mjs phraseMaxWords). */
-export const MAX_PHRASE_WORDS = 5;
+export const MAX_PHRASE_WORDS = 6;
+
+/** Dictionary idioms use placeholders: "make up one's mind", "pull oneself together". */
+const POSSESSIVES = new Set(['my', 'your', 'his', 'her', 'its', 'our', 'their']);
+const REFLEXIVES = new Set(['myself', 'yourself', 'himself', 'herself', 'itself', 'ourselves', 'yourselves', 'themselves']);
+const placeholder = (w: string): string => (POSSESSIVES.has(w) ? "one's" : REFLEXIVES.has(w) ? 'oneself' : w);
 /** Longest selection accepted for a phrase lookup. */
 export const MAX_SELECTION_WORDS = 12;
 
@@ -41,12 +46,14 @@ export interface PhraseHit {
 
 /**
  * Spellings tried for a span: as written; first word reduced to its lemma ("gave up" -> "give up",
- * "looking forward to" -> "look forward to"); every word reduced ("figured things out" stays unmatched).
+ * "looking forward to" -> "look forward to"); every word reduced; and each of those with pronouns
+ * replaced by the dictionary placeholders ("made up my mind" -> "make up one's mind").
  */
 function variants(words: readonly LineWord[], lemmas: readonly string[], start: number, end: number): string[] {
   const norm = words.slice(start, end + 1).map((w) => w.norm);
   const lem = lemmas.slice(start, end + 1);
-  const out = [norm.join(' '), [lem[0], ...norm.slice(1)].join(' '), lem.join(' ')];
+  const base = [norm, [lem[0]!, ...norm.slice(1)], lem];
+  const out = [...base.map((ws) => ws.join(' ')), ...base.map((ws) => ws.map(placeholder).join(' '))];
   return [...new Set(out)];
 }
 

@@ -244,6 +244,10 @@ export function App() {
             网页查词：单击单词即显示释义（关闭后只响应双击和拖选；已启用的网页需重新启用才生效）
           </label>
           <label className="check">
+            <input type="checkbox" checked={settings.webTranslate} onChange={(e) => void saveSettings({ webTranslate: e.target.checked })} />
+            网页机器翻译：选中 2–12 个词时自动显示机器翻译和所在整句译文；选中更长的句子时提供“译”按钮（Chrome 本机翻译，文字不离开电脑；已启用的网页需重新启用才生效）
+          </label>
+          <label className="check">
             <input type="checkbox" checked={settings.pauseOnLookup} onChange={(e) => void saveSettings({ pauseOnLookup: e.target.checked })} />
             查词时暂停视频（关闭词卡后自动继续）
           </label>
