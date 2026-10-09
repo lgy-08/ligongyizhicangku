@@ -71,7 +71,7 @@ async function main() {
   const lic = join(SRC_DIR, 'LICENSE');
   if (existsSync(lic)) copyFileSync(lic, join(OUT_DIR, 'LICENSE-ECDICT.txt'));
   console.log(
-    `rows ${stats.rows}, kept ${entries.length} entries, ${Object.keys(forms).length} form->lemma mappings, ` +
+    `rows ${stats.rows}, kept ${stats.words} words + ${stats.phrases} phrases, ${Object.keys(forms).length} form->lemma mappings, ` +
       `${(json.length / 1024 / 1024).toFixed(2)} MB, ${Math.round(performance.now() - t0)} ms -> ${OUT}`,
   );
 }

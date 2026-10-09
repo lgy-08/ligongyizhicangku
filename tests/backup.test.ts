@@ -87,5 +87,10 @@ describe('sanitizeSettings', () => {
     });
     expect(sanitizeSettings(null)).toEqual(DEFAULT_SETTINGS);
     expect(sanitizeSettings({ rareRankThreshold: 5000.4, backupReminderDays: 0 })).toMatchObject({ rareRankThreshold: 5000, backupReminderDays: 0 });
+    // card opacity is clamped to 0.4 .. 1
+    expect(sanitizeSettings({ cardOpacity: 0.1 }).cardOpacity).toBe(0.4);
+    expect(sanitizeSettings({ cardOpacity: 3 }).cardOpacity).toBe(1);
+    expect(sanitizeSettings({ cardOpacity: 0.666 }).cardOpacity).toBe(0.67);
+    expect(sanitizeSettings({ cardOpacity: 'x' }).cardOpacity).toBe(DEFAULT_SETTINGS.cardOpacity);
   });
 });

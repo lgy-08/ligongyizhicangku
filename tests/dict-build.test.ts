@@ -50,6 +50,24 @@ describe('selectEntries', () => {
     expect(forms).toEqual({ ran: 'run', running: 'run', runs: 'run' });
     expect(entries[0]).toEqual(['run', 'rʌn', 'v. 跑', 'zk', 250]);
   });
+  it('keeps phrases made of common words, drops technical terms, long phrases and rare words', () => {
+    const rows = csvRows([
+      'give,giv,,"v. 给",,5,1,zk,80,80,,,',
+      'up,ap,,"adv. 向上",,5,1,zk,50,50,,,',
+      'zinc,zink,,"n. 锌",,1,,cet6,9000,9500,,,',
+      'oxide,oksaid,,"n. 氧化物",,1,,cet6,9800,9900,,,',
+      'quark,kwork,,"n. 夸克",,,,toefl,25000,26000,,,',
+      'give up,,,"放弃, 停止\\n[法] 交出",,,,,0,0,,,',
+      'zinc oxide,,,"[化] 氧化锌",,,,,0,0,,,',
+      'give up quark,,,"测试",,,,,0,0,,,',
+      'up up up up up up,,,"太长",,,,,0,0,,,',
+    ]);
+    const { entries, stats } = selectEntries(rows);
+    const phraseEntries = entries.filter((e) => e[0].includes(' '));
+    expect(phraseEntries).toEqual([['give up', '', '放弃, 停止', '', 0]]); // technical line removed
+    expect(stats).toMatchObject({ words: 5, phrases: 1 });
+  });
+
   it('fails clearly when a column is missing', () => {
     expect(() => selectEntries(parseCsv('word,phonetic\nrun,x'))).toThrow(/column "translation" not found/);
   });

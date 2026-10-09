@@ -1,5 +1,6 @@
 import type { DictLike } from '../dict/dictionary';
 import { lemmatize } from '../dict/lemmatize';
+import { findPhrases, lineWords, matchSelection } from '../dict/phrases';
 import { buildBackup, parseBackup, planMerge } from '../vocab/backup';
 import { shouldRemind } from '../vocab/reminder';
 import { DEFAULT_SETTINGS, sanitizeSettings, type CustomDefinition, type Settings, type VocabRecord, type VocabStatus } from '../vocab/types';
@@ -11,6 +12,7 @@ import {
   type LlRequest,
   type LlResponse,
   type LookupResult,
+  type PhraseLookupResult,
   type ReminderResult,
   type SwStartEntry,
   type SwStatus,
@@ -117,7 +119,44 @@ export async function handleRequest(msg: unknown, deps: RouterDeps): Promise<LlR
           wordEntry: lr.word !== lr.lemma ? (d.get(lr.word) ?? null) : null,
           custom: custom ?? null,
           vocab: vocabMap.get(lr.lemma) ?? null,
+          phrases: [],
         };
+        if (dict && req.context) {
+          const words = lineWords(req.context.text);
+          if (req.context.wordIndex < words.length) {
+            result.phrases = findPhrases(words, dict, { mustInclude: req.context.wordIndex })
+              .slice(0, 3)
+              .flatMap((h) => {
+                const entry = dict.get(h.phrase);
+                return entry ? [{ phrase: h.phrase, entry }] : [];
+              });
+          }
+        }
+        return { ok: true, data: result };
+      }
+      case 'll/phrase-lookup': {
+        const { dict, error } = await deps.getDict();
+        const words = lineWords(req.text);
+        const from = Math.min(req.from, words.length - 1);
+        const to = Math.min(req.to, words.length - 1);
+        const result: PhraseLookupResult = {
+          selection: words.slice(from, to + 1).map((w) => w.text).join(' '),
+          match: null,
+          inner: [],
+          dictAvailable: dict !== null,
+          dictError: error,
+        };
+        if (dict && from >= 0 && to >= from) {
+          const key = matchSelection(words, dict, from, to);
+          const entry = key ? dict.get(key) : undefined;
+          if (key && entry) result.match = { phrase: key, entry };
+          else {
+            result.inner = findPhrases(words, dict, { within: [from, to] }).flatMap((h) => {
+              const e = dict.get(h.phrase);
+              return e ? [{ phrase: h.phrase, entry: e }] : [];
+            });
+          }
+        }
         return { ok: true, data: result };
       }
       case 'll/annotate': {

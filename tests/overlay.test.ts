@@ -152,6 +152,7 @@ function overlayRig(opts: { failLookup?: boolean } = {}) {
 
 // Real value is 700 ms. Tests use a shorter one, but long enough that the simulated
 // "stale caption" steps reliably happen inside the settle period even on a busy machine.
+const POS = { x: 10, top: null, bottom: 20, maxHeight: 300 };
 const SETTLE_MS = 150;
 const settle = () => new Promise((r) => setTimeout(r, SETTLE_MS * 2));
 
@@ -198,7 +199,7 @@ describe('OverlayController', () => {
     const r = overlayRig();
     r.ctl.attachSession(r.session, 'AAAAAAAAAAA');
     await r.ctl.importFile(new File([SRT], 'a.srt'));
-    await r.ctl.openCard('ran', 10, 20);
+    await r.ctl.openCard('ran', POS);
     expect(r.ctl.store.get().card).toMatchObject({ word: 'ran', loading: false, result: { lemma: 'run' } });
 
     await r.ctl.setStatus('unknown');
@@ -219,7 +220,7 @@ describe('OverlayController', () => {
   it('shows lookup errors in the card', async () => {
     const r = overlayRig({ failLookup: true });
     r.ctl.attachSession(r.session, 'AAAAAAAAAAA');
-    await r.ctl.openCard('ran', 0, 0);
+    await r.ctl.openCard('ran', POS);
     expect(r.ctl.store.get().card).toMatchObject({ loading: false, error: 'boom', result: null });
   });
 
@@ -227,12 +228,12 @@ describe('OverlayController', () => {
     const r = overlayRig();
     r.ctl.attachSession(r.session, 'AAAAAAAAAAA');
     r.state.paused = false;
-    await r.ctl.openCard('ran', 0, 0);
+    await r.ctl.openCard('ran', POS);
     expect(r.state.paused).toBe(false);
     r.ctl.closeCard();
 
     r.ctl.store.set({ settings: { ...DEFAULT_SETTINGS, pauseOnLookup: true } });
-    await r.ctl.openCard('ran', 0, 0);
+    await r.ctl.openCard('ran', POS);
     expect(r.state.paused).toBe(true);
     r.ctl.closeCard();
     await Promise.resolve();
@@ -256,7 +257,7 @@ describe('OverlayController', () => {
     const annotateCalls = r.calls.filter((c) => c.type === 'll/annotate') as { words: string[] }[];
     expect(annotateCalls.map((c) => c.words)).toEqual([['The', 'mice', 'ran'], ['away']]);
 
-    await r.ctl.openCard('ran', 0, 0);
+    await r.ctl.openCard('ran', POS);
     await r.ctl.setStatus('learning');
     s = r.ctl.store.get();
     expect(s.annotations.ran!.status).toBe('learning');
@@ -480,13 +481,46 @@ describe('OverlayController', () => {
     player.remove();
   });
 
+  it('word card with line context shows the phrases containing the word', async () => {
+    const r = overlayRig();
+    r.ctl.attachSession(r.session, 'AAAAAAAAAAA');
+    const target = { lineKey: 'live-0', text: 'We are looking forward to it', from: 2, to: 2 };
+    await r.ctl.openCard('looking', POS, target);
+    const card = r.ctl.store.get().card!;
+    expect(card).toMatchObject({ kind: 'word', target, result: { lemma: 'look' } });
+    expect(card.result!.phrases.map((p) => p.phrase)).toEqual(['look forward to']);
+  });
+
+  it('phrase card for a selection: match, inner phrases, stale results dropped', async () => {
+    const r = overlayRig();
+    r.ctl.attachSession(r.session, 'AAAAAAAAAAA');
+    const text = 'Honestly I gave up, kind of';
+    await r.ctl.openPhraseCard({ lineKey: 'c1', text, from: 2, to: 3 }, POS);
+    expect(r.ctl.store.get().card).toMatchObject({
+      kind: 'phrase',
+      word: 'gave up',
+      loading: false,
+      phrase: { match: { phrase: 'give up' } },
+      result: null,
+    });
+
+    // open a second card before the first answer arrives: only the second one is shown
+    const p1 = r.ctl.openPhraseCard({ lineKey: 'c1', text, from: 0, to: 1 }, POS);
+    const p2 = r.ctl.openCard('kind', POS, { lineKey: 'c1', text, from: 4, to: 4 });
+    await Promise.all([p1, p2]);
+    const card = r.ctl.store.get().card!;
+    expect(card.kind).toBe('word');
+    expect(card.result!.phrases.map((p) => p.phrase)).toEqual(['kind of']);
+    expect(card.phrase).toBeNull();
+  });
+
   it('opens the card below a word in the upper half (top) or above it (bottom)', async () => {
     const r = overlayRig();
     r.ctl.attachSession(r.session, 'AAAAAAAAAAA');
-    await r.ctl.openCard('ran', 5, null, 40);
-    expect(r.ctl.store.get().card).toMatchObject({ x: 5, top: 40, bottom: null });
-    await r.ctl.openCard('mice', 5, 30);
-    expect(r.ctl.store.get().card).toMatchObject({ top: null, bottom: 30 });
+    await r.ctl.openCard('ran', { x: 5, top: 40, bottom: 99, maxHeight: 200 });
+    expect(r.ctl.store.get().card).toMatchObject({ x: 5, top: 40, bottom: null, maxHeight: 200 });
+    await r.ctl.openCard('mice', { x: 5, top: null, bottom: 30, maxHeight: null });
+    expect(r.ctl.store.get().card).toMatchObject({ top: null, bottom: 30, maxHeight: null });
   });
 
   it('checks the backup reminder at most once per page', async () => {

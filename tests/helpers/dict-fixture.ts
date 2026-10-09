@@ -5,8 +5,15 @@ export const FIXTURE_DICT_FILE: DictFile = {
   format: 'lingualens-dict',
   version: 1,
   source: 'test fixture',
-  count: 12,
+  count: 19,
   entries: [
+    ['give', 'giv', 'v. 给', 'zk', 80],
+    ['look', 'luk', 'v. 看', 'zk', 90],
+    ['kind', 'kaind', 'n. 种类\\na. 友好的', 'zk', 300],
+    ['give up', '', '放弃, 停止', '', 0],
+    ['look forward to', '', '期望, 盼望', '', 0],
+    ['kind of', '', '<口>稍微, 有点儿', '', 0],
+    ['as a matter of fact', '', '事实上', '', 0],
     ['run', 'rʌn', 'v. 跑\\nn. 跑步', 'zk gk', 300],
     ['running', "'rʌniŋ", 'n. 赛跑', 'gk', 3200],
     ['go', 'gәu', 'v. 去', 'zk', 50],
@@ -28,6 +35,8 @@ export const FIXTURE_DICT_FILE: DictFile = {
     gone: 'go',
     mice: 'mouse',
     left: 'leave',
+    gave: 'give',
+    given: 'give',
   },
 };
 

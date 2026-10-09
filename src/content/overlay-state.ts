@@ -1,21 +1,43 @@
 import type { CaptionCue } from '../captions/types';
-import type { Annotation, LookupResult, ReminderResult } from '../storage/protocol';
+import type { Annotation, LookupResult, PhraseLookupResult, ReminderResult } from '../storage/protocol';
 import type { TranscriptItem } from './transcript';
 import { DEFAULT_SETTINGS, type Settings, type VocabStatus } from '../vocab/types';
 
-export interface CardState {
-  /** Surface word as clicked. */
-  word: string;
-  /** Position relative to the overlay root, in px. */
+/** Card position relative to the overlay root, in px. */
+export interface CardPosition {
   x: number;
-  /** Exactly one of bottom / top is set: the card opens above or below the clicked word. */
+  /** Exactly one of bottom / top is set: the card opens above or below the clicked words. */
   bottom: number | null;
   top: number | null;
+  /** Keeps the card inside the space above the subtitle box (it must not cover the English line). */
+  maxHeight: number | null;
+}
+
+/** Which words of which caption line the card is about (for highlighting and phrase lookup). */
+export interface CardTarget {
+  lineKey: string;
+  text: string;
+  from: number;
+  to: number;
+}
+
+export interface CardState extends CardPosition {
+  kind: 'word' | 'phrase';
+  /** Clicked word, or the selected words for a phrase card. */
+  word: string;
+  target: CardTarget | null;
   loading: boolean;
   result: LookupResult | null;
+  phrase: PhraseLookupResult | null;
   error: string | null;
   editing: boolean;
   saving: boolean;
+}
+
+/** true if word `index` of line `lineKey` is part of the card's target. */
+export function isTargeted(card: CardState | null, lineKey: string, index: number): boolean {
+  const t = card?.target;
+  return !!t && t.lineKey === lineKey && index >= t.from && index <= t.to;
 }
 
 export interface OverlayState {

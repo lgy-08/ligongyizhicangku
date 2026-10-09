@@ -1,29 +1,123 @@
-import { useEffect, useRef, useState, useSyncExternalStore, type MouseEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
 import { formatTimestamp } from '../../captions/text';
+import { MAX_SELECTION_WORDS } from '../../dict/phrases';
 import { tokenize } from '../../dict/tokenize';
+import type { PhraseEntry } from '../../storage/protocol';
 import { STATUS_LABEL, VOCAB_STATUSES, type VocabStatus } from '../../vocab/types';
 import type { OverlayController } from '../overlay-controller';
-import { captionMode, wordClass, type CardState, type OverlayState } from '../overlay-state';
+import { captionMode, wordClass, type CardPosition, type CardState, type OverlayState } from '../overlay-state';
 
-const CARD_WIDTH = 330;
-type WordRenderer = (text: string) => ReactNode;
+const CARD_WIDTH = 320;
+type WordRenderer = (text: string, lineKey: string) => ReactNode;
 /** Prevents buttons from taking focus, so Space / K / F keep controlling the YouTube player. */
 const noFocus = (e: MouseEvent) => e.preventDefault();
+
+/**
+ * Where the card goes. For words in the subtitle box the card sits ABOVE THE WHOLE BOX and its
+ * height is capped to the space above it, so it never covers any English subtitle line.
+ * Words in the upper half (e.g. in the list) open the card below them.
+ */
+function placeCard(root: HTMLElement, anchor: DOMRect, anchorEl: Element): CardPosition {
+  const r = root.getBoundingClientRect();
+  const center = anchor.left + anchor.width / 2 - r.left;
+  const x = Math.max(8, Math.min(center - CARD_WIDTH / 2, r.width - CARD_WIDTH - 8));
+  const box = anchorEl.closest('.sub-box');
+  if (box) {
+    const b = box.getBoundingClientRect();
+    return { x, bottom: r.bottom - b.top + 6, top: null, maxHeight: Math.max(100, b.top - r.top - 12) };
+  }
+  if (anchor.top - r.top < r.height / 2) {
+    const top = anchor.bottom - r.top + 6;
+    return { x, top, bottom: null, maxHeight: Math.max(100, r.height - top - 8) };
+  }
+  return { x, bottom: r.bottom - anchor.top + 6, top: null, maxHeight: Math.max(100, anchor.top - r.top - 12) };
+}
+
+const unionRect = (a: DOMRect, b: DOMRect): DOMRect => {
+  const left = Math.min(a.left, b.left);
+  const top = Math.min(a.top, b.top);
+  return new DOMRect(left, top, Math.max(a.right, b.right) - left, Math.max(a.bottom, b.bottom) - top);
+};
+
+interface Drag {
+  lineKey: string;
+  text: string;
+  anchor: number;
+  current: number;
+  anchorEl: HTMLElement;
+  currentEl: HTMLElement;
+}
 
 export function App({ ctl }: { ctl: OverlayController }) {
   const s = useSyncExternalStore(ctl.store.subscribe, ctl.store.get);
   const rootRef = useRef<HTMLDivElement>(null);
+  const drag = useRef<Drag | null>(null);
+  const [dragSel, setDragSel] = useState<{ lineKey: string; text: string; from: number; to: number } | null>(null);
 
-  const onWordClick = (e: MouseEvent<HTMLSpanElement>, word: string) => {
+  /**
+   * Mouse down on a word starts a selection; releasing on the same word opens the word card,
+   * releasing on another word of the same line opens the phrase card for the whole range.
+   */
+  const finishDrag = () => {
+    const d = drag.current;
+    drag.current = null;
+    setDragSel(null);
     const root = rootRef.current;
-    if (!root) return;
-    const r = root.getBoundingClientRect();
-    const w = e.currentTarget.getBoundingClientRect();
-    const center = w.left + w.width / 2 - r.left;
-    const x = Math.max(8, Math.min(center - CARD_WIDTH / 2, r.width - CARD_WIDTH - 8));
-    // Words in the upper half (e.g. in the list) open the card below them, otherwise above.
-    if (w.top - r.top < r.height / 2) void ctl.openCard(word, x, null, w.bottom - r.top + 8);
-    else void ctl.openCard(word, x, r.bottom - w.top + 8);
+    if (!d || !root) return;
+    if (d.current === d.anchor) {
+      const pos = placeCard(root, d.anchorEl.getBoundingClientRect(), d.anchorEl);
+      void ctl.openCard(d.anchorEl.textContent ?? '', pos, { lineKey: d.lineKey, text: d.text, from: d.anchor, to: d.anchor });
+      return;
+    }
+    const from = Math.min(d.anchor, d.current);
+    const to = Math.max(d.anchor, d.current);
+    const pos = placeCard(root, unionRect(d.anchorEl.getBoundingClientRect(), d.currentEl.getBoundingClientRect()), d.anchorEl);
+    void ctl.openPhraseCard({ lineKey: d.lineKey, text: d.text, from, to }, pos);
+  };
+
+  useEffect(() => {
+    // Releases over the video (outside our elements) reach the window; releases on our elements are
+    // stopped at the shadow host, so the root's onMouseUp below handles those.
+    const up = () => {
+      if (drag.current) finishDrag();
+    };
+    window.addEventListener('mouseup', up);
+    return () => window.removeEventListener('mouseup', up);
+  });
+
+  const onWordDown = (e: MouseEvent<HTMLSpanElement>, lineKey: string, text: string, wi: number) => {
+    e.preventDefault(); // no focus, no native text selection
+    e.stopPropagation();
+    if (e.button !== 0) return;
+    const t = s.card?.target;
+    // Shift+click extends from the word the card is open for (same line) to this word.
+    if (e.shiftKey && t && t.lineKey === lineKey && t.text === text && t.from !== wi) {
+      const root = rootRef.current;
+      const other = root?.querySelector<HTMLElement>(`[data-line="${CSS.escape(lineKey)}"][data-wi="${t.from}"]`);
+      if (root && other) {
+        const from = Math.min(t.from, wi);
+        const to = Math.min(Math.max(t.from, wi), from + MAX_SELECTION_WORDS - 1);
+        const pos = placeCard(root, unionRect(other.getBoundingClientRect(), e.currentTarget.getBoundingClientRect()), other);
+        void ctl.openPhraseCard({ lineKey, text, from, to }, pos);
+        return;
+      }
+    }
+    drag.current = { lineKey, text, anchor: wi, current: wi, anchorEl: e.currentTarget, currentEl: e.currentTarget };
+    setDragSel({ lineKey, text, from: wi, to: wi });
+  };
+
+  const onWordEnter = (e: MouseEvent<HTMLSpanElement>, lineKey: string, wi: number) => {
+    const d = drag.current;
+    if (!d || d.lineKey !== lineKey || Math.abs(wi - d.anchor) >= MAX_SELECTION_WORDS) return;
+    d.current = wi;
+    d.currentEl = e.currentTarget;
+    setDragSel({ lineKey, text: d.text, from: Math.min(d.anchor, wi), to: Math.max(d.anchor, wi) });
+  };
+
+  const selected = (lineKey: string, text: string, wi: number): boolean => {
+    if (dragSel) return dragSel.lineKey === lineKey && dragSel.text === text && wi >= dragSel.from && wi <= dragSel.to;
+    const t = s.card?.target;
+    return !!t && t.lineKey === lineKey && t.text === text && wi >= t.from && wi <= t.to;
   };
 
   const mode = captionMode(s);
@@ -34,28 +128,39 @@ export function App({ ctl }: { ctl: OverlayController }) {
         ? s.liveText.split('\n').map((text, i) => ({ key: `live-${i}`, text }))
         : [];
 
-  /** Renders a caption line with every word clickable (lookup) and highlighted by status. */
-  const words: WordRenderer = (text) =>
-    tokenize(text).map((t, i) =>
-      t.isWord ? (
+  /**
+   * Renders a caption line: every word is clickable (word card), draggable across words (phrase card)
+   * and highlighted by status. Word indexes match lineWords() used for phrase lookups.
+   */
+  const words: WordRenderer = (text, lineKey) => {
+    let wi = -1;
+    return tokenize(text).map((t, i) => {
+      if (!t.isWord) return <span key={i}>{t.text}</span>;
+      const idx = ++wi;
+      return (
         <span
           key={i}
-          className={`${wordClass(s.annotations[t.text], s.settings)}${s.card?.word === t.text ? ' sel' : ''}`}
-          onMouseDown={noFocus}
-          onClick={(e) => {
-            e.stopPropagation();
-            onWordClick(e, t.text);
-          }}
+          data-line={lineKey}
+          data-wi={idx}
+          className={`${wordClass(s.annotations[t.text], s.settings)}${selected(lineKey, text, idx) ? ' sel' : ''}`}
+          onMouseDown={(e) => onWordDown(e, lineKey, text, idx)}
+          onMouseEnter={(e) => onWordEnter(e, lineKey, idx)}
         >
           {t.text}
         </span>
-      ) : (
-        <span key={i}>{t.text}</span>
-      ),
-    );
+      );
+    });
+  };
 
   return (
-    <div className="root" ref={rootRef}>
+    <div
+      className="root"
+      ref={rootRef}
+      style={{ '--card-alpha': String(s.settings.cardOpacity) } as CSSProperties}
+      onMouseUp={() => {
+        if (drag.current) finishDrag();
+      }}
+    >
       <Toolbar s={s} ctl={ctl} />
       {s.listOpen && mode === 'file' && s.cues && <CueList s={s} ctl={ctl} />}
       {s.listOpen && mode === 'youtube' && <TranscriptList s={s} ctl={ctl} words={words} />}
@@ -68,7 +173,7 @@ export function App({ ctl }: { ctl: OverlayController }) {
               </div>
             )}
             {lines.map((line) => (
-              <div key={line.key}>{words(line.text)}</div>
+              <div key={line.key}>{words(line.text, line.key)}</div>
             ))}
           </div>
         </div>
@@ -222,12 +327,26 @@ function TranscriptList({ s, ctl, words }: { s: OverlayState; ctl: OverlayContro
             </li>
           ) : (
             <li key={item.line.id} className={`tl${item.line.id === currentKey ? ' active' : ''}`}>
-              {words(item.line.text)}
+              {words(item.line.text, `t-${item.line.id}`)}
             </li>
           ),
         )}
       </ol>
     </div>
+  );
+}
+
+/** Compact phrase list: phrase in bold, first two lines of its dictionary translation. */
+function PhraseList({ items }: { items: readonly PhraseEntry[] }) {
+  return (
+    <ul className="phrases">
+      {items.map((p) => (
+        <li key={p.phrase}>
+          <b>{p.phrase}</b>
+          <span>{p.entry.translation.split('\n').slice(0, 2).join('；')}</span>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -242,10 +361,44 @@ function WordCard({ card, ctl }: { card: CardState; ctl: OverlayController }) {
   const entry = r?.lemmaEntry ?? null;
   const hasAnyDefinition = !!(entry || r?.wordEntry || r?.custom);
 
+  const style: CSSProperties = {
+    left: card.x,
+    ...(card.top !== null ? { top: card.top } : { bottom: card.bottom ?? 0 }),
+    ...(card.maxHeight !== null ? { maxHeight: card.maxHeight } : {}),
+  };
+
+  if (card.kind === 'phrase') {
+    const p = card.phrase;
+    return (
+      <div className="card" style={style}>
+        <div className="head">
+          <span className="word phrase">{card.word}</span>
+          {p?.match && p.match.phrase !== card.word.toLowerCase() && <span className="lemma">→ {p.match.phrase}</span>}
+          <button className="x" onMouseDown={noFocus} onClick={() => ctl.closeCard()} title="关闭">
+            ×
+          </button>
+        </div>
+        {card.loading && <div className="meta">查询中…</div>}
+        {p?.match && <div className="def">{p.match.entry.translation}</div>}
+        {p && !p.match && (
+          <>
+            <div className="none">
+              {p.dictAvailable ? `短语词典中没有「${p.selection}」。` : (p.dictError ?? '词典未加载。')}
+              {p.inner.length > 0 ? '其中包含以下短语：' : '可以分别点击单词查看释义。'}
+            </div>
+            <PhraseList items={p.inner} />
+          </>
+        )}
+        {p && <div className="meta">短语释义来自 ECDICT 词典 · 拖选或 Shift+点击可选中多个词 · 短语暂不能加入生词本</div>}
+        {card.error && <div className="err">{card.error}</div>}
+      </div>
+    );
+  }
+
   return (
     <div
       className="card"
-      style={card.top !== null ? { left: card.x, top: card.top } : { left: card.x, bottom: card.bottom ?? 0 }}
+      style={style}
       onKeyDown={(e) => {
         if (e.key === 'Escape') ctl.closeCard();
       }}
@@ -260,6 +413,13 @@ function WordCard({ card, ctl }: { card: CardState; ctl: OverlayController }) {
       </div>
 
       {card.loading && <div className="meta">查询中…</div>}
+
+      {r && r.phrases.length > 0 && (
+        <div className="in-phrase">
+          <small>所在短语</small>
+          <PhraseList items={r.phrases} />
+        </div>
+      )}
 
       {r && (
         <>

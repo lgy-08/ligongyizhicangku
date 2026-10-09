@@ -1,5 +1,6 @@
 import type { DictEntry } from '../dict/dictionary';
 import type { LemmaMethod } from '../dict/lemmatize';
+import { MAX_SELECTION_WORDS } from '../dict/phrases';
 import type { CustomDefinition, Settings, VocabRecord, VocabStatus } from '../vocab/types';
 
 /** Messages from content script / options page -> background (service worker). */
@@ -11,7 +12,13 @@ export type LlRequest =
   | { type: 'll/counter-increment'; key: string }
   | { type: 'll/sw-status' }
   // dictionary + vocabulary (LL-002)
-  | { type: 'll/lookup'; word: string }
+  | {
+      type: 'll/lookup';
+      word: string;
+      /** The caption line and the clicked word's index among its words, to find phrases containing it. */
+      context?: { text: string; wordIndex: number };
+    }
+  | { type: 'll/phrase-lookup'; text: string; from: number; to: number }
   | { type: 'll/annotate'; words: string[] }
   | { type: 'll/vocab-set'; lemma: string; status: VocabStatus | null; word?: string }
   | { type: 'll/vocab-list' }
@@ -57,6 +64,24 @@ export interface LookupResult {
   wordEntry: DictEntry | null;
   custom: CustomDefinition | null;
   vocab: VocabRecord | null;
+  /** Dictionary phrases in the caption line that contain the clicked word (longest first, at most 3). */
+  phrases: PhraseEntry[];
+}
+
+export interface PhraseEntry {
+  phrase: string;
+  entry: DictEntry;
+}
+
+export interface PhraseLookupResult {
+  /** The selected words as shown. */
+  selection: string;
+  /** The selection itself as a dictionary phrase (possibly via lemmas: "gave up" -> "give up"). */
+  match: PhraseEntry | null;
+  /** Shorter dictionary phrases found inside the selection, when the selection itself is not one. */
+  inner: PhraseEntry[];
+  dictAvailable: boolean;
+  dictError: string | null;
 }
 
 export interface Annotation {
@@ -98,6 +123,7 @@ const ALL = new Set([
   ...NO_ARG,
   ...KEYED,
   'll/lookup',
+  'll/phrase-lookup',
   'll/annotate',
   'll/vocab-set',
   'll/custom-def-set',
@@ -108,6 +134,8 @@ const ALL = new Set([
 
 const isStr = (v: unknown, max: number): v is string => typeof v === 'string' && v.length > 0 && v.length <= max;
 const isLemma = (v: unknown): v is string => isStr(v, MAX_WORD_LENGTH) && LEMMA_RE.test(v);
+const isIndex = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v < 1000;
+export const MAX_LINE_LENGTH = 500;
 
 /** Returns null when valid, otherwise a human-readable reason. */
 export function validateRequest(msg: unknown): string | null {
@@ -122,8 +150,18 @@ export function validateRequest(msg: unknown): string | null {
     return null;
   }
   switch (m.type) {
-    case 'll/lookup':
-      return isStr(m.word, MAX_WORD_LENGTH) ? null : `word must be a string of 1-${MAX_WORD_LENGTH} characters`;
+    case 'll/lookup': {
+      if (!isStr(m.word, MAX_WORD_LENGTH)) return `word must be a string of 1-${MAX_WORD_LENGTH} characters`;
+      if (m.context === undefined) return null;
+      const c = m.context as { text?: unknown; wordIndex?: unknown } | null;
+      if (!c || !isStr(c.text, MAX_LINE_LENGTH) || !isIndex(c.wordIndex)) return 'context must be { text, wordIndex }';
+      return null;
+    }
+    case 'll/phrase-lookup':
+      if (!isStr(m.text, MAX_LINE_LENGTH)) return `text must be a string of 1-${MAX_LINE_LENGTH} characters`;
+      if (!isIndex(m.from) || !isIndex(m.to) || (m.to as number) < (m.from as number)) return 'from/to must be word indexes with from <= to';
+      if ((m.to as number) - (m.from as number) + 1 > MAX_SELECTION_WORDS) return `select at most ${MAX_SELECTION_WORDS} words`;
+      return null;
     case 'll/annotate':
       if (!Array.isArray(m.words)) return 'words must be an array';
       if (m.words.length > MAX_ANNOTATE_WORDS) return `too many words (max ${MAX_ANNOTATE_WORDS})`;

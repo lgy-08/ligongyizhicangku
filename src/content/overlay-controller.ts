@@ -1,13 +1,22 @@
 import { CueIndex, parseCaptionFile, type CaptionCue } from '../captions';
+import { lineWords } from '../dict/phrases';
 import { uniqueWords } from '../dict/tokenize';
-import type { Annotation, LlRequest, LlResponse, LookupResult, ReminderResult } from '../storage/protocol';
+import type { Annotation, LlRequest, LlResponse, LookupResult, PhraseLookupResult, ReminderResult } from '../storage/protocol';
 import type { CustomDefinition, Settings, VocabRecord, VocabStatus } from '../vocab/types';
 import type { PlayerEventType, PlayerSession } from '../youtube/player-session';
 import { CueSync } from './cue-sync';
 import { readVisibleCaptionText } from '../youtube/caption-dom-observer';
 import { LiveCaptions } from './live-captions';
 import { buildTranscriptView, Coverage, LiveTranscript } from './transcript';
-import { applyStatus, captionMode, initialOverlayState, type OverlayState } from './overlay-state';
+import {
+  applyStatus,
+  captionMode,
+  initialOverlayState,
+  type CardPosition,
+  type CardState,
+  type CardTarget,
+  type OverlayState,
+} from './overlay-state';
 import { createStore, type Store } from './store';
 
 export type CallFn = <T>(msg: LlRequest) => Promise<LlResponse<T>>;
@@ -354,11 +363,18 @@ export class OverlayController {
 
   // ---------- word card ----------
 
-  /** Position in px relative to the overlay: pass `bottom` (card above the word) or `top` (below it). */
-  async openCard(word: string, x: number, bottom: number | null, top: number | null = null): Promise<void> {
-    const epoch = this.epoch;
+  /** Incremented for every card opened; async results for an older card are dropped. */
+  private cardSeq = 0;
+
+  private showCard(kind: CardState['kind'], word: string, pos: CardPosition, target: CardTarget | null): number {
+    const position: CardPosition = {
+      x: pos.x,
+      top: pos.top,
+      bottom: pos.top === null ? (pos.bottom ?? 0) : null,
+      maxHeight: pos.maxHeight,
+    };
     this.store.set({
-      card: { word, x, bottom: top === null ? (bottom ?? 0) : null, top, loading: true, result: null, error: null, editing: false, saving: false },
+      card: { kind, word, target, ...position, loading: true, result: null, phrase: null, error: null, editing: false, saving: false },
       menuOpen: false,
     });
     const video = this.session?.video;
@@ -366,11 +382,41 @@ export class OverlayController {
       video.pause();
       this.pausedByUs = true;
     }
-    const res = await this.call<LookupResult>({ type: 'll/lookup', word });
+    return ++this.cardSeq;
+  }
+
+  /**
+   * Word card. With `target`, phrases of that caption line containing the word are looked up too
+   * (e.g. clicking "look" in "look forward to").
+   */
+  async openCard(word: string, pos: CardPosition, target: CardTarget | null = null): Promise<void> {
+    const epoch = this.epoch;
+    const seq = this.showCard('word', word, pos, target);
+    const res = await this.call<LookupResult>({
+      type: 'll/lookup',
+      word,
+      ...(target ? { context: { text: target.text, wordIndex: target.from } } : {}),
+    });
     const card = this.store.get().card;
-    if (epoch !== this.epoch || !card || card.word !== word) return; // stale
+    if (epoch !== this.epoch || seq !== this.cardSeq || !card) return; // stale
     this.store.set({
       card: res.ok ? { ...card, loading: false, result: res.data } : { ...card, loading: false, error: res.error },
+    });
+  }
+
+  /** Phrase card for several selected words of one caption line (dictionary only, no machine translation). */
+  async openPhraseCard(target: CardTarget, pos: CardPosition): Promise<void> {
+    const epoch = this.epoch;
+    const selection = lineWords(target.text)
+      .slice(target.from, target.to + 1)
+      .map((w) => w.text)
+      .join(' ');
+    const seq = this.showCard('phrase', selection, pos, target);
+    const res = await this.call<PhraseLookupResult>({ type: 'll/phrase-lookup', text: target.text, from: target.from, to: target.to });
+    const card = this.store.get().card;
+    if (epoch !== this.epoch || seq !== this.cardSeq || !card) return; // stale
+    this.store.set({
+      card: res.ok ? { ...card, loading: false, phrase: res.data } : { ...card, loading: false, error: res.error },
     });
   }
 
@@ -386,10 +432,11 @@ export class OverlayController {
     const card = this.store.get().card;
     const r = card?.result;
     if (!card || !r) return;
+    const seq = this.cardSeq;
     this.store.set({ card: { ...card, saving: true } });
     const res = await this.call<VocabRecord | null>({ type: 'll/vocab-set', lemma: r.lemma, status, word: r.word });
     const now = this.store.get().card;
-    if (!now || now.word !== card.word) return;
+    if (!now || seq !== this.cardSeq) return;
     if (!res.ok) {
       this.store.set({ card: { ...now, saving: false, error: res.error } });
       return;
@@ -409,10 +456,11 @@ export class OverlayController {
     const card = this.store.get().card;
     const r = card?.result;
     if (!card || !r) return;
+    const seq = this.cardSeq;
     this.store.set({ card: { ...card, saving: true } });
     const res = await this.call<CustomDefinition | null>({ type: 'll/custom-def-set', lemma: r.lemma, text });
     const now = this.store.get().card;
-    if (!now || now.word !== card.word) return;
+    if (!now || seq !== this.cardSeq) return;
     this.store.set({
       card: res.ok
         ? { ...now, saving: false, editing: false, error: null, result: { ...r, custom: res.data } }

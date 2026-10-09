@@ -62,6 +62,12 @@ describe('validateRequest', () => {
     expect(validateRequest({ type: 'll/vocab-set', lemma: 'run', status: 'maybe' })).toMatch(/status/);
     expect(validateRequest({ type: 'll/custom-def-set', lemma: 'run', text: 'x'.repeat(2001) })).toMatch(/2000/);
     expect(validateRequest({ type: 'll/reminder-dismiss' })).toMatch(/boolean/);
+    expect(validateRequest({ type: 'll/lookup', word: 'a', context: { text: 'a', wordIndex: -1 } })).toMatch(/context/);
+    expect(validateRequest({ type: 'll/lookup', word: 'a', context: { text: '', wordIndex: 0 } })).toMatch(/context/);
+    expect(validateRequest({ type: 'll/phrase-lookup', text: 'a b', from: 2, to: 1 })).toMatch(/from <= to/);
+    expect(validateRequest({ type: 'll/phrase-lookup', text: 'x', from: 0, to: 12 })).toMatch(/at most 12/);
+    expect(validateRequest({ type: 'll/phrase-lookup', text: 'x'.repeat(501), from: 0, to: 1 })).toMatch(/text/);
+    expect(validateRequest({ type: 'll/phrase-lookup', text: 'give up', from: 0, to: 1 })).toBeNull();
   });
   it('identifies LinguaLens messages', () => {
     expect(isLlMessage({ type: 'll/kv-get' })).toBe(true);
@@ -170,6 +176,41 @@ describe('handleRequest: dictionary + vocabulary', () => {
     const r = data<LookupResult>(await req({ type: 'll/lookup', word: 'ran' }));
     expect(r).toMatchObject({ lemma: 'ran', dictAvailable: false, dictError: '词典未加载（HTTP 404）', lemmaEntry: null });
     expect((await req({ type: 'll/lookup', word: "'" })).ok).toBe(false);
+  });
+
+  it('lookup with line context also returns the phrases containing the word', async () => {
+    const { req } = setup();
+    const r = data<LookupResult>(await req({ type: 'll/lookup', word: 'gave', context: { text: 'I gave up, kind of', wordIndex: 1 } }));
+    expect(r.lemma).toBe('give');
+    expect(r.phrases.map((p) => [p.phrase, p.entry.translation])).toEqual([['give up', '放弃, 停止']]);
+    const none = data<LookupResult>(await req({ type: 'll/lookup', word: 'I', context: { text: 'I gave up', wordIndex: 0 } }));
+    expect(none.phrases).toEqual([]);
+    const noCtx = data<LookupResult>(await req({ type: 'll/lookup', word: 'gave' }));
+    expect(noCtx.phrases).toEqual([]);
+  });
+
+  it('phrase-lookup: whole selection, inner phrases, or nothing', async () => {
+    const { req } = setup();
+    const text = 'As a matter of fact I gave up, kind of';
+    expect(data(await req({ type: 'll/phrase-lookup', text, from: 6, to: 7 }))).toMatchObject({
+      selection: 'gave up',
+      match: { phrase: 'give up', entry: { translation: '放弃, 停止' } },
+      inner: [],
+      dictAvailable: true,
+    });
+    const inner = data<{ match: unknown; inner: { phrase: string }[] }>(await req({ type: 'll/phrase-lookup', text, from: 0, to: 6 }));
+    expect(inner.match).toBeNull();
+    expect(inner.inner.map((p) => p.phrase)).toEqual(['as a matter of fact']);
+    expect(data(await req({ type: 'll/phrase-lookup', text, from: 4, to: 5 }))).toMatchObject({ selection: 'fact I', match: null, inner: [] });
+  });
+
+  it('phrase-lookup without dictionary explains why', async () => {
+    const { req } = setup({ getDict: async () => ({ dict: null, error: '词典未加载' }) });
+    expect(data(await req({ type: 'll/phrase-lookup', text: 'give up', from: 0, to: 1 }))).toMatchObject({
+      match: null,
+      dictAvailable: false,
+      dictError: '词典未加载',
+    });
   });
 
   it('annotate maps every surface form to lemma, status, rank', async () => {

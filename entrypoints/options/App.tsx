@@ -4,7 +4,7 @@ import { sendLl } from '../../src/storage/client';
 import type { ImportResult, KvRecord, LlRequest, LlResponse } from '../../src/storage/protocol';
 import { LAST_EXPORT_KEY } from '../../src/storage/router';
 import type { BackupFile } from '../../src/vocab/backup';
-import { STATUS_LABEL, VOCAB_STATUSES, type CustomDefinition, type Settings, type VocabRecord, type VocabStatus } from '../../src/vocab/types';
+import { CARD_OPACITY_MAX, CARD_OPACITY_MIN, STATUS_LABEL, VOCAB_STATUSES, type CustomDefinition, type Settings, type VocabRecord, type VocabStatus } from '../../src/vocab/types';
 
 const call = <T,>(msg: LlRequest): Promise<LlResponse<T>> => sendLl<T>((m) => browser.runtime.sendMessage(m), msg);
 const fmtDate = (t: number | null) => (t ? new Date(t).toLocaleString() : '从未');
@@ -196,6 +196,18 @@ export function App() {
           <label className="check">
             <input type="checkbox" checked={settings.youtubeCaptions} onChange={(e) => void saveSettings({ youtubeCaptions: e.target.checked })} />
             未导入字幕文件时，使用 YouTube 自带字幕（尽力而为：需打开 CC，只读取当前显示的文字，没有完整时间轴；开启期间 YouTube 原字幕框会被隐藏，避免重复显示）
+          </label>
+          <label className="check">
+            词卡不透明度
+            <input
+              type="range"
+              min={CARD_OPACITY_MIN}
+              max={CARD_OPACITY_MAX}
+              step={0.05}
+              value={settings.cardOpacity}
+              onChange={(e) => void saveSettings({ cardOpacity: Number(e.target.value) })}
+            />
+            {Math.round(settings.cardOpacity * 100)}%（越低越透明；刷新 YouTube 页面后生效）
           </label>
           <label className="check">
             <input type="checkbox" checked={settings.pauseOnLookup} onChange={(e) => void saveSettings({ pauseOnLookup: e.target.checked })} />

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { Dictionary } from '../src/dict/dictionary';
 import { lemmatize, normalizeWord, ruleCandidates } from '../src/dict/lemmatize';
 import { createDictLoader } from '../src/dict/loader';
+import { findPhrases, lineWords } from '../src/dict/phrases';
 import { tokenize, uniqueWords } from '../src/dict/tokenize';
 import { FIXTURE_DICT_FILE, fixtureDict } from './helpers/dict-fixture';
 
@@ -13,7 +14,7 @@ describe('Dictionary', () => {
     expect(d.get('run')).toEqual({ word: 'run', phonetic: 'rʌn', translation: 'v. 跑\nn. 跑步', tags: ['zk', 'gk'], frqRank: 300 });
     expect(d.get('serendipity')!.tags).toEqual([]);
     expect(d.get('nope')).toBeUndefined();
-    expect(d.size).toBe(12);
+    expect(d.size).toBe(19);
   });
   it('validates the file format', () => {
     expect(() => Dictionary.fromJson(null)).toThrow(/invalid dictionary/);
@@ -89,6 +90,16 @@ describe.skipIf(!existsSync(REAL))('lemmatize (real ECDICT build)', () => {
   ])('%s -> %s', (w, lemma) => {
     expect(lemmatize(w, d).lemma).toBe(lemma);
   });
+  it.each([
+    ['I gave up smoking last year', 1, 'give up'],
+    ['We are looking forward to it', 2, 'look forward to'],
+    ['As a matter of fact, no.', 0, 'as a matter of fact'],
+    ['She figured out the answer', 1, 'figure out'],
+  ])('phrase in "%s" around word %i -> %s', (text, index, phrase) => {
+    const hits = findPhrases(lineWords(text), d, { mustInclude: index });
+    expect(hits.map((h) => h.phrase)).toContain(phrase);
+  });
+
   it('has a reasonable size', () => {
     expect(d.size).toBeGreaterThan(30_000);
     expect(d.get('run')!.translation).toContain('跑');

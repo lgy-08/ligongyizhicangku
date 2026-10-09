@@ -79,7 +79,7 @@ IndexedDB 数据库 `lingualens`，版本 2。升级只新增仓库，从不删�
 
 1. **导入字幕**：content 读取文件 → 解析为 `CaptionCue[]` → 建 `CueIndex` → 收集去重单词 → `ll/annotate` 一次性取回词元、状态和词频 → 渲染高亮。
 2. **同步**：播放时 `CueSync` 每帧查询 `CueIndex`，只在当前字幕集合变化时更新界面；暂停、跳转时单次更新。
-3. **查词**：点击单词 → `ll/lookup` → background 词形还原、查词典、查生词表和自定义释义 → 词卡。
+3. **查词**：鼠标在单词上按下并在同一个词上松开 → `ll/lookup`（附带所在字幕行和词序号）→ background 词形还原、查词典、查生词表和自定义释义，并用 `findPhrases` 找出包含该词的短语 → 词卡。按下后拖到同一行另一个词再松开，或 Shift+点击 → `ll/phrase-lookup` → `matchSelection` 整段匹配，失败时列出范围内的短语 → 短语词卡。短语逻辑在 `src/dict/phrases.ts`，与 UI 共用 `lineWords` 的词序号。词卡放在字幕框上方并限制高度，不遮挡英文字幕。
 4. **标记**：`ll/vocab-set` → 返回新记录 → 本地把同一词元的所有词形一起更新高亮。
 5. **YouTube 字幕模式**：`captionMode()` 在“有导入文件 → file；否则开关开启 → youtube；否则 none”中选择。youtube 模式下 `LiveCaptions` 监听 `#movie_player` 子树变化，读取 `.caption-visual-line` / `.ytp-caption-segment` 文字和 CC 按钮状态，只对新出现的单词发 `ll/annotate`。同时把 `.ytp-caption-window-container` 用内联样式设为透明，离开该模式时恢复原值。
 6. **已出现的字幕列表**：youtube 模式下每个可见字幕行以“首次出现时的视频时间”为键插入 `LiveTranscript`（有序数组，二分插入），8 秒窗口内同文去重、前缀增长合并。`Coverage` 根据 timeupdate 和 seeking 记录实际播放过的区间，`buildTranscriptView` 在不连续处插入空缺标记。全部只在内存中，`detachSession` 时清空；广告期间和会话开始时的残留文字不记录。
