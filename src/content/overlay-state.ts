@@ -30,6 +30,8 @@ export interface MtState {
   error?: string;
   /** Translation of the sentence the selection is in, as context. */
   sentence?: { source: string; status: 'loading' | 'done' | 'error'; text?: string };
+  /** Which translator channel answered ("direct" / "bridge"), for diagnostics. */
+  channel?: string;
 }
 
 export interface CardState extends CardPosition {

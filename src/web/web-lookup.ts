@@ -230,10 +230,11 @@ export class WebLookup {
     const r = await this.translator.translate(text, (loaded) =>
       this.cards.patch(seq, (c) => ({ mt: { ...(c.mt ?? { status: 'loading' }), status: 'downloading', progress: loaded } })),
     );
+    const channel = (this.translator as { backendName?: string | null }).backendName ?? undefined;
     this.cards.patch(seq, (c) => ({
       mt: r.ok
-        ? { ...(c.mt ?? {}), status: 'done', text: r.text, progress: undefined }
-        : { status: 'error', error: r.error }, // drop the sentence part too
+        ? { ...(c.mt ?? {}), status: 'done', text: r.text, progress: undefined, channel }
+        : { status: 'error', error: r.error, channel }, // drop the sentence part too
     }));
     if (!r.ok || !withSentence) return;
     const s = await this.translator.translate(sentence!);

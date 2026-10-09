@@ -14,7 +14,9 @@ const noFocus = (e: MouseEvent) => e.preventDefault();
 export function MtSection({ mt }: { mt: NonNullable<CardState['mt']> }) {
   return (
     <div className="mt">
-      <small>机器翻译 · 本机</small>
+      <small title={mt.channel ? `翻译通道：${mt.channel === 'direct' ? '直接调用' : mt.channel === 'bridge' ? '页面桥接' : mt.channel}` : undefined}>
+        机器翻译 · 本机
+      </small>
       {mt.status === 'loading' && <div className="meta">翻译中…</div>}
       {mt.status === 'downloading' && (
         <div className="meta">正在下载翻译语言包（仅首次）… {mt.progress !== undefined ? `${Math.round(mt.progress * 100)}%` : ''}</div>
