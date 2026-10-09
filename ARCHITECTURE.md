@@ -30,7 +30,7 @@
 | SRT/VTT 是主路径 | 导入的字幕（`timingConfidence: exact`）始终优先，并且只有它支持字幕列表和按句跳转 |
 | YouTube 字幕只做尽力而为 | 未导入文件时，`LiveCaptions` 读取播放器当前渲染的 CC 文字，只提供“当前这一句”的点词查义，不产生时间轴；界面标注“尽力而为”，不调用下载接口 |
 | 不编造释义 | 词典没有的词显示“暂无释义”，并允许用户添加“我的释义” |
-| 隐私 | `permissions: []`，无 host_permissions；没有任何网络请求，除了加载扩展自带的词典文件 |
+| 隐私 | `permissions: ['activeTab', 'scripting']`，无 host_permissions；网页查词脚本只在用户点击后注入当前标签页；没有任何网络请求，除了加载扩展自带的词典文件 |
 
 ## 2. 模块
 
@@ -82,8 +82,9 @@ IndexedDB 数据库 `lingualens`，版本 2。升级只新增仓库，从不删�
 3. **查词**：鼠标在单词上按下并在同一个词上松开 → `ll/lookup`（附带所在字幕行和词序号）→ background 词形还原、查词典、查生词表和自定义释义，并用 `findPhrases` 找出包含该词的短语 → 词卡。按下后拖到同一行另一个词再松开，或 Shift+点击 → `ll/phrase-lookup` → `matchSelection` 整段匹配，失败时列出范围内的短语 → 短语词卡。短语逻辑在 `src/dict/phrases.ts`，与 UI 共用 `lineWords` 的词序号。词卡放在字幕框上方并限制高度，不遮挡英文字幕。
 4. **标记**：`ll/vocab-set` → 返回新记录 → 本地把同一词元的所有词形一起更新高亮。
 5. **YouTube 字幕模式**：`captionMode()` 在“有导入文件 → file；否则开关开启 → youtube；否则 none”中选择。youtube 模式下 `LiveCaptions` 监听 `#movie_player` 子树变化，读取 `.caption-visual-line` / `.ytp-caption-segment` 文字和 CC 按钮状态，只对新出现的单词发 `ll/annotate`。同时把 `.ytp-caption-window-container` 用内联样式设为透明，离开该模式时恢复原值。
-6. **已出现的字幕列表**：youtube 模式下每个可见字幕行以“首次出现时的视频时间”为键插入 `LiveTranscript`（有序数组，二分插入），8 秒窗口内同文去重、前缀增长合并。`Coverage` 根据 timeupdate 和 seeking 记录实际播放过的区间，`buildTranscriptView` 在不连续处插入空缺标记。全部只在内存中，`detachSession` 时清空；广告期间和会话开始时的残留文字不记录。
-7. **备份提醒**：每次页面加载最多检查一次 `ll/reminder-check`；满足条件时 background 先记下提醒时间，再返回 `remind: true`，保证每个周期只提醒一次。
+6. **网页查词（LL-003）**：工具栏弹窗（`entrypoints/popup`）用 `scripting.executeScript` 把未列入 manifest 的 `web-lookup.js` 注入当前标签页（`activeTab` 授权），并设置 ON 角标；background 在标签页开始加载新文档时清除角标。脚本在 `<html>` 上挂一个 shadow root 图层，`WebLookup` 被动监听 mouseup：一个英文单词 → `ll/lookup`（附带所在文本的上下文以查找短语），2–12 个词 → `ll/phrase-lookup`；输入框、可编辑区和代码块排除。词卡逻辑由 `CardController`（`src/content/card-controller.ts`）提供，YouTube 叠加层和网页查词共用；词卡界面在 `src/content/ui/WordCard.tsx`，样式在 `card.css`。生词状态写入同一个 IndexedDB，与 YouTube 共用生词本。
+7. **已出现的字幕列表**：youtube 模式下每个可见字幕行以“首次出现时的视频时间”为键插入 `LiveTranscript`（有序数组，二分插入），8 秒窗口内同文去重、前缀增长合并。`Coverage` 根据 timeupdate 和 seeking 记录实际播放过的区间，`buildTranscriptView` 在不连续处插入空缺标记。全部只在内存中，`detachSession` 时清空；广告期间和会话开始时的残留文字不记录。
+8. **备份提醒**：每次页面加载最多检查一次 `ll/reminder-check`；满足条件时 background 先记下提醒时间，再返回 `remind: true`，保证每个周期只提醒一次。
 
 ## 5. 与 YouTube 的交互约定
 

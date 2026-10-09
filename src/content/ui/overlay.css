@@ -60,46 +60,7 @@
 .list li.gap:hover { background: none; }
 .list .t { color: #8fb3d9; font-family: ui-monospace, Consolas, monospace; font-size: 11px; margin-right: 6px; }
 
-/* ---------- word card ---------- */
-/* Semi-transparent card: --card-alpha comes from the "词卡不透明度" setting (0.4 - 1). */
-.card {
-  position: absolute; width: 320px; max-height: 62%; overflow: auto; pointer-events: auto;
-  background: rgba(24, 25, 28, var(--card-alpha, .78));
-  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
-  color: #f2f2f2; border: 1px solid rgba(255, 255, 255, .16); border-radius: 10px; padding: 10px 12px;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, .35); font-size: 13px; line-height: 1.5;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, .7); /* keeps text readable over bright video when see-through */
-}
-.card .head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
-.card .word { font-size: 18px; font-weight: 600; }
-.card .word.phrase { font-size: 16px; }
-.card .in-phrase { margin: 6px 0; padding: 4px 8px; border-left: 3px solid #e6b422; background: rgba(230, 180, 34, .1); border-radius: 4px; }
-.card .in-phrase small { display: block; color: #e6c35c; font-size: 11px; }
-.card ul.phrases { list-style: none; margin: 4px 0; padding: 0; }
-.card ul.phrases li { margin: 2px 0; }
-.card ul.phrases b { color: #ffe08a; margin-right: 6px; font-weight: 600; }
-.card .lemma { color: #9cc3ff; font-size: 13px; }
-.card .ph { color: #aaa; font-size: 13px; }
-.card .x { margin-left: auto; background: none; border: 0; color: #aaa; font-size: 18px; cursor: pointer; line-height: 1; }
-.card .x:hover { color: #fff; }
-.card .tags { margin: 4px 0; display: flex; gap: 4px; flex-wrap: wrap; }
-.card .tag { font-size: 11px; color: #bbb; border: 1px solid #555; border-radius: 4px; padding: 0 5px; }
-.card .def { white-space: pre-line; margin: 6px 0; }
-.card .sub-def { border-top: 1px dashed #444; padding-top: 6px; color: #ccc; font-size: 13px; }
-.card .none { color: #f0b37e; margin: 8px 0; }
-.card .custom { background: rgba(255, 255, 255, .07); border-left: 3px solid #6aa6ff; padding: 6px 8px; margin: 8px 0; white-space: pre-line; border-radius: 4px; }
-.card .custom small { display: block; color: #8fb3d9; font-size: 11px; }
-.card textarea { width: 100%; min-height: 70px; background: rgba(0, 0, 0, .45); color: #eee; border: 1px solid #555; border-radius: 6px; padding: 6px; font: inherit; font-size: 13px; resize: vertical; }
-.card .row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; align-items: center; }
-.card .btn { background: rgba(255, 255, 255, .1); border: 1px solid rgba(255, 255, 255, .22); color: #eee; border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 13px; }
-.card .btn:hover:not(:disabled) { background: rgba(255, 255, 255, .2); }
-.card .btn:disabled { opacity: .5; cursor: default; }
-.card .btn.on.known { background: #2f5d3a; border-color: #4f9a62; }
-.card .btn.on.learning { background: #6b5620; border-color: #c49a2c; }
-.card .btn.on.unknown { background: #6b2b24; border-color: #d0604f; }
-.card .link { background: none; border: 0; color: #8fb3d9; cursor: pointer; padding: 0; font-size: 12px; }
-.card .meta { color: #888; font-size: 11px; margin-top: 8px; }
-.card .err { color: #ff8f80; font-size: 12px; margin-top: 6px; }
+/* ---------- word card: see card.css ---------- */
 
 /* ---------- messages ---------- */
 .msg {

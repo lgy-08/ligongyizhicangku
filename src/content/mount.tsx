@@ -1,6 +1,7 @@
 import { createRoot } from 'react-dom/client';
 import type { OverlayController } from './overlay-controller';
-import css from './ui/overlay.css?inline';
+import cardCss from './ui/card.css?inline';
+import overlayCss from './ui/overlay.css?inline';
 import { App } from './ui/App';
 
 /** Pointer events that must not reach YouTube's player handlers (click = play/pause, dblclick = fullscreen). */
@@ -18,7 +19,7 @@ export function mountOverlay(container: Element, ctl: OverlayController): () => 
   Object.assign(host.style, { position: 'absolute', inset: '0', zIndex: '60', pointerEvents: 'none' });
   const shadow = host.attachShadow({ mode: 'open' });
   const style = document.createElement('style');
-  style.textContent = css;
+  style.textContent = `${overlayCss}\n${cardCss}`;
   const mountPoint = document.createElement('div');
   shadow.append(style, mountPoint);
 

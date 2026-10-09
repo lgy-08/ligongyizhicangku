@@ -1,25 +1,17 @@
 import { CueIndex, parseCaptionFile, type CaptionCue } from '../captions';
-import { lineWords } from '../dict/phrases';
 import { uniqueWords } from '../dict/tokenize';
-import type { Annotation, LlRequest, LlResponse, LookupResult, PhraseLookupResult, ReminderResult } from '../storage/protocol';
-import type { CustomDefinition, Settings, VocabRecord, VocabStatus } from '../vocab/types';
-import type { PlayerEventType, PlayerSession } from '../youtube/player-session';
-import { CueSync } from './cue-sync';
+import type { Annotation, ReminderResult } from '../storage/protocol';
+import type { Settings, VocabStatus } from '../vocab/types';
 import { readVisibleCaptionText } from '../youtube/caption-dom-observer';
+import type { PlayerEventType, PlayerSession } from '../youtube/player-session';
+import { CardController, type CallFn } from './card-controller';
+import { CueSync } from './cue-sync';
 import { LiveCaptions } from './live-captions';
-import { buildTranscriptView, Coverage, LiveTranscript } from './transcript';
-import {
-  applyStatus,
-  captionMode,
-  initialOverlayState,
-  type CardPosition,
-  type CardState,
-  type CardTarget,
-  type OverlayState,
-} from './overlay-state';
+import { applyStatus, captionMode, initialOverlayState, type CardPosition, type CardTarget, type OverlayState } from './overlay-state';
 import { createStore, type Store } from './store';
+import { buildTranscriptView, Coverage, LiveTranscript } from './transcript';
 
-export type CallFn = <T>(msg: LlRequest) => Promise<LlResponse<T>>;
+export type { CallFn } from './card-controller';
 
 const ANNOTATE_CHUNK = 5000;
 
@@ -43,6 +35,7 @@ export class OverlayController {
     options: { settleMs?: number } = {},
   ) {
     this.settleMs = options.settleMs ?? OverlayController.DEFAULT_SETTLE_MS;
+    this.cards = this.createCards(); // after parameter properties (this.call) are set
   }
 
   get settings(): Settings {
@@ -92,6 +85,7 @@ export class OverlayController {
   /** Clears everything tied to the current video: no subtitle residue across videos. */
   detachSession(): void {
     this.epoch++;
+    this.cards?.invalidate(); // a lookup still in flight must not reopen a card for the old video
     this.sync?.dispose();
     this.sync = null;
     this.live?.dispose(); // also restores YouTube's own caption box
@@ -361,111 +355,53 @@ export class OverlayController {
     this.sync?.update();
   }
 
-  // ---------- word card ----------
+  // ---------- word card (shared logic in CardController) ----------
 
-  /** Incremented for every card opened; async results for an older card are dropped. */
-  private cardSeq = 0;
+  private readonly cards: CardController<OverlayState>;
 
-  private showCard(kind: CardState['kind'], word: string, pos: CardPosition, target: CardTarget | null): number {
-    const position: CardPosition = {
-      x: pos.x,
-      top: pos.top,
-      bottom: pos.top === null ? (pos.bottom ?? 0) : null,
-      maxHeight: pos.maxHeight,
-    };
-    this.store.set({
-      card: { kind, word, target, ...position, loading: true, result: null, phrase: null, error: null, editing: false, saving: false },
-      menuOpen: false,
-    });
-    const video = this.session?.video;
-    if (this.settings.pauseOnLookup && video && !video.paused) {
-      video.pause();
-      this.pausedByUs = true;
-    }
-    return ++this.cardSeq;
-  }
-
-  /**
-   * Word card. With `target`, phrases of that caption line containing the word are looked up too
-   * (e.g. clicking "look" in "look forward to").
-   */
-  async openCard(word: string, pos: CardPosition, target: CardTarget | null = null): Promise<void> {
-    const epoch = this.epoch;
-    const seq = this.showCard('word', word, pos, target);
-    const res = await this.call<LookupResult>({
-      type: 'll/lookup',
-      word,
-      ...(target ? { context: { text: target.text, wordIndex: target.from } } : {}),
-    });
-    const card = this.store.get().card;
-    if (epoch !== this.epoch || seq !== this.cardSeq || !card) return; // stale
-    this.store.set({
-      card: res.ok ? { ...card, loading: false, result: res.data } : { ...card, loading: false, error: res.error },
+  private createCards(): CardController<OverlayState> {
+    return new CardController<OverlayState>(this.store, this.call, {
+    onOpen: () => {
+      this.store.set({ menuOpen: false });
+      const video = this.session?.video;
+      if (this.settings.pauseOnLookup && video && !video.paused) {
+        video.pause();
+        this.pausedByUs = true;
+      }
+    },
+    onClose: () => {
+      const video = this.session?.video;
+      if (this.pausedByUs && video?.paused) void video.play().catch(() => {});
+      this.pausedByUs = false;
+    },
+    onStatus: (lemma, status) => this.store.set((s) => ({ annotations: applyStatus(s.annotations, lemma, status) })),
     });
   }
 
-  /** Phrase card for several selected words of one caption line (dictionary only, no machine translation). */
-  async openPhraseCard(target: CardTarget, pos: CardPosition): Promise<void> {
-    const epoch = this.epoch;
-    const selection = lineWords(target.text)
-      .slice(target.from, target.to + 1)
-      .map((w) => w.text)
-      .join(' ');
-    const seq = this.showCard('phrase', selection, pos, target);
-    const res = await this.call<PhraseLookupResult>({ type: 'll/phrase-lookup', text: target.text, from: target.from, to: target.to });
-    const card = this.store.get().card;
-    if (epoch !== this.epoch || seq !== this.cardSeq || !card) return; // stale
-    this.store.set({
-      card: res.ok ? { ...card, loading: false, phrase: res.data } : { ...card, loading: false, error: res.error },
-    });
+  /** Word card; with `target`, phrases of that caption line containing the word are shown too. */
+  openCard(word: string, pos: CardPosition, target: CardTarget | null = null): Promise<void> {
+    return this.cards.openCard(word, pos, target);
+  }
+
+  /** Phrase card for several selected words of one caption line. */
+  openPhraseCard(target: CardTarget, pos: CardPosition): Promise<void> {
+    return this.cards.openPhraseCard(target, pos);
   }
 
   closeCard(): void {
-    if (!this.store.get().card) return;
-    this.store.set({ card: null });
-    const video = this.session?.video;
-    if (this.pausedByUs && video?.paused) void video.play().catch(() => {});
-    this.pausedByUs = false;
+    this.cards.closeCard();
   }
 
-  async setStatus(status: VocabStatus | null): Promise<void> {
-    const card = this.store.get().card;
-    const r = card?.result;
-    if (!card || !r) return;
-    const seq = this.cardSeq;
-    this.store.set({ card: { ...card, saving: true } });
-    const res = await this.call<VocabRecord | null>({ type: 'll/vocab-set', lemma: r.lemma, status, word: r.word });
-    const now = this.store.get().card;
-    if (!now || seq !== this.cardSeq) return;
-    if (!res.ok) {
-      this.store.set({ card: { ...now, saving: false, error: res.error } });
-      return;
-    }
-    this.store.set((s) => ({
-      card: { ...now, saving: false, error: null, result: { ...r, vocab: res.data } },
-      annotations: applyStatus(s.annotations, r.lemma, status),
-    }));
+  setStatus(status: VocabStatus | null): Promise<void> {
+    return this.cards.setStatus(status);
   }
 
   setEditing(editing: boolean): void {
-    const card = this.store.get().card;
-    if (card) this.store.set({ card: { ...card, editing } });
+    this.cards.setEditing(editing);
   }
 
-  async saveCustomDef(text: string): Promise<void> {
-    const card = this.store.get().card;
-    const r = card?.result;
-    if (!card || !r) return;
-    const seq = this.cardSeq;
-    this.store.set({ card: { ...card, saving: true } });
-    const res = await this.call<CustomDefinition | null>({ type: 'll/custom-def-set', lemma: r.lemma, text });
-    const now = this.store.get().card;
-    if (!now || seq !== this.cardSeq) return;
-    this.store.set({
-      card: res.ok
-        ? { ...now, saving: false, editing: false, error: null, result: { ...r, custom: res.data } }
-        : { ...now, saving: false, error: res.error },
-    });
+  saveCustomDef(text: string): Promise<void> {
+    return this.cards.saveCustomDef(text);
   }
 
   // ---------- chrome ----------

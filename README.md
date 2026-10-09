@@ -36,7 +36,7 @@ npm run build                  # 产物在 .output\chrome-mv3
 3. 打开任意 `https://www.youtube.com/watch?v=...`，视频左上角会出现半透明的 “LL” 按钮。
 4. 代码修改后重新 `npm run build`，在扩展卡片上点“重新加载”，再刷新 YouTube 页面。
 
-扩展**不申请任何 permissions 或 host_permissions**，只在 `www.youtube.com` 注入内容脚本。
+权限：`activeTab` 和 `scripting`，没有 `host_permissions`。YouTube 内容脚本只匹配 `www.youtube.com`；网页查词脚本只在用户于弹出窗口点击“在本页启用查词”时注入当前标签页。
 
 ## 使用
 
@@ -49,7 +49,7 @@ npm run build                  # 产物在 .output\chrome-mv3
    - 词典里没有的词会显示“暂无释义”，可以“添加我的释义”。
    - 点“认识 / 半熟 / 不认识”标记；同一词元的所有词形一起高亮。
 3. 使用导入的字幕文件时，“LL” → “字幕列表”可以点击任一句跳转。
-4. 点击浏览器工具栏中的扩展图标，或 “LL” → “生词本 / 备份 / 设置”，打开设置页。
+4. 点击浏览器工具栏中的扩展图标打开小窗口：可以“在本页启用查词”（任意英文网页上双击单词、选中短语查释义），或打开生词本与设置。
 
 ## 导出与备份学习数据
 

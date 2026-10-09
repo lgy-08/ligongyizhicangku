@@ -1,0 +1,15 @@
+:host { all: initial; }
+/* Full-viewport layer that lets every click through, except on our own card / notice. */
+.root {
+  position: fixed; inset: 0; pointer-events: none;
+  font-family: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+  color: #f2f2f2; text-align: left; line-height: 1.5;
+}
+.root button { font: inherit; }
+.notice {
+  position: fixed; top: 12px; right: 12px; max-width: 320px; pointer-events: auto;
+  background: rgba(24, 25, 28, .9); color: #f2f2f2; border: 1px solid rgba(255, 255, 255, .16);
+  border-radius: 8px; padding: 8px 12px; font-size: 13px; box-shadow: 0 6px 20px rgba(0, 0, 0, .3);
+  display: flex; gap: 10px; align-items: flex-start;
+}
+.notice button { background: none; border: 0; color: #9cc3ff; cursor: pointer; font-size: 12px; padding: 0; white-space: nowrap; }

@@ -39,7 +39,9 @@ export default defineBackground(() => {
     return true; // keep the channel open for the async response
   });
 
-  browser.action.onClicked.addListener(() => {
-    void browser.runtime.openOptionsPage();
+  // The toolbar icon opens the popup (enable web lookup / open settings). Web lookup lives only as
+  // long as the page: when a tab starts loading a new document, its "ON" badge is cleared.
+  browser.tabs.onUpdated.addListener((tabId, info) => {
+    if (info.status === 'loading') void browser.action.setBadgeText({ tabId, text: '' }).catch(() => {});
   });
 });
